@@ -1,0 +1,76 @@
+# ==========================================
+# JATE Repository .gitignore
+# ==========================================
+
+# Environment variables & secrets (CRITICAL: Never commit real secrets)
+.env
+.env*.local
+*.env
+!.env.example
+
+# Node / Nuxt Frontend
+frontend/node_modules/
+frontend/.nuxt/
+frontend/.output/
+frontend/dist/
+frontend/.nitro/
+frontend/.cache/
+node_modules/
+.nuxt/
+.output/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python / FastAPI Backend
+backend/__pycache__/
+backend/*/__pycache__/
+backend/*/*/__pycache__/
+backend/.pytest_cache/
+backend/.venv/
+backend/venv/
+backend/env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Generated Artifacts / Storage (Keep folder via .gitkeep)
+storage/pdfs/*
+!storage/pdfs/.gitkeep
+backend/storage/pdfs/*
+!backend/storage/pdfs/.gitkeep
+
+# Docker & Database persistence (if mapped to host)
+pgdata/
+redisdata/
+*.log
+
+# Operating System files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE & Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace

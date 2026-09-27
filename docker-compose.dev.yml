@@ -1,0 +1,17 @@
+# ==============================================================================
+# JATE (Automated Job Acquisition & Tracking Engine) - Local Dev Override
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Or copy to docker-compose.override.yml for automatic inclusion:
+#   cp docker-compose.dev.yml docker-compose.override.yml
+# ==============================================================================
+
+services:
+  backend:
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend/app:/app/app
+
+  worker:
+    volumes:
+      - ./backend/app:/app/app

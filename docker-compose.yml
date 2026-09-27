@@ -1,0 +1,231 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: jate_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-jate_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jate_secure_password_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-jate_db}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "127.0.0.1:5433:5432"
+    networks:
+      - jate_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jate_admin} -d ${POSTGRES_DB:-jate_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2048M
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+  redis:
+    image: redis:7-alpine
+    container_name: jate_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-jate_redis_password_2026}
+    volumes:
+      - redisdata:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      - jate_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-jate_redis_password_2026}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.2"
+          memory: 128M
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: jate-backend:latest
+    container_name: jate_backend
+    restart: unless-stopped
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-jate_admin}:${POSTGRES_PASSWORD:-jate_secure_password_2026}@db:5432/${POSTGRES_DB:-jate_db}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-jate_redis_password_2026}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-jate_redis_password_2026}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-jate_redis_password_2026}@redis:6379/1
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - STORAGE_DIR=/app/storage/pdfs
+      - CORS_ORIGINS=${CORS_ORIGINS:-["*"]}
+      - REDDIT_CLIENT_ID=${REDDIT_CLIENT_ID:-}
+      - REDDIT_CLIENT_SECRET=${REDDIT_CLIENT_SECRET:-}
+      - REDDIT_USER_AGENT=${REDDIT_USER_AGENT:-JATE-Bot/1.0.0}
+    volumes:
+      - pdf_storage:/app/storage/pdfs
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - jate_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1536M
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: jate-backend:latest
+    container_name: jate_worker
+    restart: unless-stopped
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-jate_admin}:${POSTGRES_PASSWORD:-jate_secure_password_2026}@db:5432/${POSTGRES_DB:-jate_db}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-jate_redis_password_2026}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-jate_redis_password_2026}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-jate_redis_password_2026}@redis:6379/1
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - STORAGE_DIR=/app/storage/pdfs
+      - REDDIT_CLIENT_ID=${REDDIT_CLIENT_ID:-}
+      - REDDIT_CLIENT_SECRET=${REDDIT_CLIENT_SECRET:-}
+      - REDDIT_USER_AGENT=${REDDIT_USER_AGENT:-JATE-Bot/1.0.0}
+    volumes:
+      - pdf_storage:/app/storage/pdfs
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - jate_net
+    deploy:
+      resources:
+        limits:
+          cpus: "2.5"
+          memory: 2048M
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: jate_beat
+    restart: unless-stopped
+    command: celery -A app.workers.celery_app beat --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-jate_admin}:${POSTGRES_PASSWORD:-jate_secure_password_2026}@db:5432/${POSTGRES_DB:-jate_db}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-jate_redis_password_2026}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-jate_redis_password_2026}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-jate_redis_password_2026}@redis:6379/1
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - jate_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: jate_frontend
+    restart: unless-stopped
+    environment:
+      - HOST=0.0.0.0
+      - PORT=3000
+      - NUXT_PUBLIC_API_BASE=${NUXT_PUBLIC_API_BASE:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+    networks:
+      - jate_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1536M
+        reservations:
+          cpus: "0.2"
+          memory: 256M
+
+  nginx:
+    image: nginx:alpine
+    container_name: jate_nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-80}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - jate_net
+    profiles:
+      - proxy
+      - standalone
+
+
+networks:
+  jate_net:
+    driver: bridge
+    name: jate_net
+
+volumes:
+  pgdata:
+    name: jate_pgdata
+  redisdata:
+    name: jate_redisdata
+  pdf_storage:
+    name: jate_pdf_storage
