@@ -119,6 +119,8 @@ class ApplicationAsset(Base):
     )
     cover_letter_markdown: Mapped[str] = mapped_column(Text, nullable=False)
     cover_letter_pdf_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    resume_markdown: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    resume_pdf_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     ans_why_company_250: Mapped[str] = mapped_column(String(250), nullable=False)
     ans_why_company_500: Mapped[str] = mapped_column(String(500), nullable=False)
     ans_technical_challenge_250: Mapped[str] = mapped_column(String(250), nullable=False)

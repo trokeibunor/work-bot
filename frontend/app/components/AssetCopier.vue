@@ -11,6 +11,8 @@ interface AssetData {
   id: string
   cover_letter_markdown: string
   cover_letter_pdf_path?: string
+  resume_markdown: string
+  resume_pdf_path?: string
   ans_why_company_250: string
   ans_why_company_500: string
   ans_technical_challenge_250: string
@@ -45,7 +47,7 @@ const config = useRuntimeConfig()
 const apiBase = config.public.apiBase ?? 'http://localhost:8000'
 
 // Active Tab
-const activeTab = ref<'answers' | 'cover_letter' | 'contacts' | 'adhoc'>('answers')
+const activeTab = ref<'answers' | 'cover_letter' | 'resume' | 'contacts' | 'adhoc'>('answers')
 
 // Copy state tracking
 const copiedField = ref<string | null>(null)
@@ -170,6 +172,99 @@ const downloadPdf = () => {
 }
 
 // ----------------------------------------------------------------------
+// RESUME CUSTOMIZATION STATE & METHODS
+// ----------------------------------------------------------------------
+const isRegeneratingResume = ref<boolean>(false)
+const isEditingResume = ref<boolean>(false)
+const editableResumeMarkdown = ref<string>(props.assets.resume_markdown || '')
+const isSavingResume = ref<boolean>(false)
+const resumeSavedSuccess = ref<boolean>(false)
+const resumeError = ref<string>('')
+const resumeDirectives = ref<string>('')
+
+watch(() => props.assets.resume_markdown, (newVal) => {
+  if (!isEditingResume.value && newVal) {
+    editableResumeMarkdown.value = newVal
+  }
+})
+
+const regenerateResume = async () => {
+  if (isRegeneratingResume.value) return
+  isRegeneratingResume.value = true
+  resumeError.value = ''
+  resumeSavedSuccess.value = false
+
+  try {
+    const res = await fetch(`${apiBase}/api/jobs/${props.jobId}/regenerate-resume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        custom_instructions: resumeDirectives.value.trim() || null
+      })
+    })
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}))
+      throw new Error(errData.detail || `Failed to regenerate resume (${res.status})`)
+    }
+
+    const data = await res.json()
+    props.assets.resume_markdown = data.resume_markdown
+    editableResumeMarkdown.value = data.resume_markdown
+    resumeSavedSuccess.value = true
+    setTimeout(() => { resumeSavedSuccess.value = false }, 3000)
+    emit('updated')
+  } catch (err: any) {
+    resumeError.value = err.message || 'Error regenerating resume'
+  } finally {
+    isRegeneratingResume.value = false
+  }
+}
+
+const saveEditedResume = async () => {
+  if (isSavingResume.value || !editableResumeMarkdown.value.trim()) return
+  isSavingResume.value = true
+  resumeError.value = ''
+  resumeSavedSuccess.value = false
+
+  try {
+    const res = await fetch(`${apiBase}/api/jobs/${props.jobId}/resume`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        resume_markdown: editableResumeMarkdown.value.trim()
+      })
+    })
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}))
+      throw new Error(errData.detail || `Failed to save resume (${res.status})`)
+    }
+
+    const data = await res.json()
+    props.assets.resume_markdown = data.resume_markdown
+    isEditingResume.value = false
+    resumeSavedSuccess.value = true
+    setTimeout(() => { resumeSavedSuccess.value = false }, 3000)
+    emit('updated')
+  } catch (err: any) {
+    resumeError.value = err.message || 'Error saving resume'
+  } finally {
+    isSavingResume.value = false
+  }
+}
+
+const cancelEditResume = () => {
+  editableResumeMarkdown.value = props.assets.resume_markdown || ''
+  isEditingResume.value = false
+  resumeError.value = ''
+}
+
+const downloadResumePdf = () => {
+  window.open(`${apiBase}/api/assets/${props.jobId}/resume/pdf`, '_blank')
+}
+
+// ----------------------------------------------------------------------
 // AD-HOC COPILOT
 // ----------------------------------------------------------------------
 const customQuestion = ref('')
@@ -214,39 +309,43 @@ const getDirectCommunityPlatform = () => {
   return 'community channels'
 }
 
-const buildPitchMessage = () => {
-  if (isCommunityOrFounder.value) {
-    return (
-      `Hi ${props.companyName || 'Team'},\n\n` +
-      `I came across your hiring post on ${getDirectCommunityPlatform()} for ${props.jobTitle || 'the engineering role'}. ` +
-      `Given my background building resilient fintech systems at Sycamore (scaling customer platforms to 400,000+ users with an 84%+ fraud reduction) and concurrent Golang backend services at ALN Riders ($1M+ volume), ` +
-      `I wanted to reach out directly to express my strong enthusiasm for what you're building.\n\n` +
-      `I have prepared tailored materials and would love to connect directly regarding how my engineering background can accelerate your roadmap.\n\n` +
-      `Portfolio: https://okeibunoremma.work\n` +
-      `GitHub: https://github.com/okeibunoremmanuel\n` +
-      `LinkedIn: https://linkedin.com/in/okeibunor-emmanuel\n\n` +
-      `Best regards,\nEmmanuel Okeibunor\nokeibunoremma@gmail.com | +234 9015379412`
-    )
+const outreachPersona = ref('technical_lead')
+const outreachType = ref('post_application')
+const isGeneratingOutreach = ref(false)
+const outreachError = ref('')
+const outreachSubjects = ref<string[]>([])
+const followUpPitchMessage = ref('')
+
+const generateOutreach = async () => {
+  if (isGeneratingOutreach.value) return
+  isGeneratingOutreach.value = true
+  outreachError.value = ''
+  outreachSubjects.value = []
+  
+  try {
+    const res = await fetch(`${apiBase}/api/jobs/${props.jobId}/outreach`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recipient_persona: outreachPersona.value,
+        outreach_type: outreachType.value
+      })
+    })
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}))
+      throw new Error(errData.detail || `Failed to generate outreach (${res.status})`)
+    }
+
+    const data = await res.json()
+    followUpPitchMessage.value = data.body
+    outreachSubjects.value = [data.subject_1, data.subject_2]
+  } catch (err: any) {
+    outreachError.value = err.message || 'Error generating outreach'
+  } finally {
+    isGeneratingOutreach.value = false
   }
-  return (
-    `Hi ${props.companyName || 'Team'},\n\n` +
-    `I recently submitted my application for the ${props.jobTitle || 'open role'}. ` +
-    `With 5+ years of software engineering experience scaling high-concurrency Golang and Python/FastAPI services, ` +
-    `as well as leading enterprise frontend systems at Sycamore (400k+ users), I am very eager to contribute to your engineering team.\n\n` +
-    `I would love the opportunity to briefly introduce myself and share how my technical background aligns with your roadmap.\n\n` +
-    `Portfolio: https://okeibunoremma.work\n` +
-    `GitHub: https://github.com/okeibunoremmanuel\n` +
-    `LinkedIn: https://linkedin.com/in/okeibunor-emmanuel\n\n` +
-    `Best regards,\nEmmanuel Okeibunor\nokeibunoremma@gmail.com | +234 9015379412`
-  )
 }
-
-const followUpPitchMessage = ref(buildPitchMessage())
-
-// Recompute if props change
-watch(() => [props.companyName, props.jobTitle, props.source, props.isFounderLed], () => {
-  followUpPitchMessage.value = buildPitchMessage()
-})
 </script>
 
 <template>
@@ -270,6 +369,15 @@ watch(() => [props.companyName, props.jobTitle, props.source, props.isFounderLed
         >
           <FileText class="w-3.5 h-3.5" />
           <span>Cover Letter</span>
+        </button>
+
+        <button
+          @click="activeTab = 'resume'"
+          class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap transition-all"
+          :class="activeTab === 'resume' ? 'bg-brand-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'"
+        >
+          <Briefcase class="w-3.5 h-3.5" />
+          <span>Resume</span>
         </button>
 
         <!-- Hiring Contacts Tab with badge -->
@@ -615,6 +723,137 @@ watch(() => [props.companyName, props.jobTitle, props.source, props.isFounderLed
 
       </div>
 
+      <!-- TAB: Resume Customization, Live Editor & PDF Generator -->
+      <div v-else-if="activeTab === 'resume'" class="space-y-4">
+        
+        <!-- Resume Action Bar -->
+        <div class="glass-card rounded-xl p-4 border border-white/10 space-y-3 bg-dark-900/70">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <Briefcase class="w-4 h-4 text-brand-400" />
+              <span class="text-xs font-bold text-white">ATS-Optimized Resume Tailoring</span>
+            </div>
+            <span class="text-[11px] text-slate-400">Tailors base resume with exact-match keywords</span>
+          </div>
+
+          <div class="grid grid-cols-1 pt-1">
+            <!-- Custom Directives -->
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-300 mb-1">Resume Directives / Extra Focus (Optional):</label>
+              <input
+                v-model="resumeDirectives"
+                type="text"
+                placeholder="e.g. Expand on Nuxt performance optimizations, omit fullstack references..."
+                class="w-full bg-dark-950 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+              />
+            </div>
+          </div>
+
+          <!-- Action Buttons for Regeneration & PDF -->
+          <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/5">
+            <button
+              @click="regenerateResume"
+              :disabled="isRegeneratingResume"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-glow-indigo transition-all disabled:opacity-50"
+            >
+              <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': isRegeneratingResume }" />
+              <span>{{ isRegeneratingResume ? 'Regenerating & Recompiling PDF...' : 'Regenerate Resume' }}</span>
+            </button>
+
+            <div class="flex items-center gap-2">
+              <button
+                v-if="!isEditingResume"
+                @click="isEditingResume = true"
+                class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-dark-850 hover:bg-dark-800 text-slate-300 hover:text-white border border-white/10 text-xs font-semibold transition-colors"
+              >
+                <Edit3 class="w-3.5 h-3.5" />
+                <span>Edit Text</span>
+              </button>
+
+              <button
+                @click="downloadResumePdf"
+                class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600/80 hover:bg-emerald-600 text-white text-xs font-semibold transition-colors shadow-glow-green"
+              >
+                <Download class="w-3.5 h-3.5" />
+                <span>View Single-Page PDF</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Success / Error Alerts -->
+          <div v-if="resumeSavedSuccess" class="p-2 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs flex items-center gap-2">
+            <CheckCircle2 class="w-3.5 h-3.5" />
+            <span>Resume & PDF recompiled successfully!</span>
+          </div>
+
+          <div v-if="resumeError" class="p-2 rounded bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
+            <AlertCircle class="w-3.5 h-3.5" />
+            <span>{{ resumeError }}</span>
+          </div>
+        </div>
+
+        <!-- Resume Content (Read or Edit Mode) -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-slate-200">
+              {{ isEditingResume ? 'Direct Markdown Editor' : 'Current Tailored Resume' }}
+            </span>
+
+            <div class="flex items-center gap-2">
+              <template v-if="isEditingResume">
+                <button
+                  @click="cancelEditResume"
+                  class="px-2.5 py-1 rounded bg-dark-850 hover:bg-dark-800 text-xs text-slate-400 hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  @click="saveEditedResume"
+                  :disabled="isSavingResume"
+                  class="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs text-white font-semibold transition-all disabled:opacity-50 shadow-glow-green"
+                >
+                  <Save class="w-3.5 h-3.5" :class="{ 'animate-spin': isSavingResume }" />
+                  <span>{{ isSavingResume ? 'Compiling PDF...' : 'Save & Recompile PDF' }}</span>
+                </button>
+              </template>
+
+              <template v-else>
+                <button
+                  @click="copyToClipboard(assets.resume_markdown, 'resume_markdown')"
+                  class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-xs text-white font-semibold shadow-glow-blue transition-all active:scale-95"
+                >
+                  <Check v-if="copiedField === 'resume_markdown'" class="w-3.5 h-3.5 text-white" />
+                  <Copy v-else class="w-3.5 h-3.5 text-white" />
+                  <span>{{ copiedField === 'resume_markdown' ? 'Copied!' : 'Copy Full Text' }}</span>
+                </button>
+              </template>
+            </div>
+          </div>
+
+          <!-- Edit Textarea -->
+          <div v-if="isEditingResume">
+            <textarea
+              v-model="editableResumeMarkdown"
+              rows="22"
+              class="w-full p-4 rounded-lg bg-dark-950/90 border border-brand-500/40 text-xs text-slate-200 font-mono leading-relaxed focus:outline-none focus:border-brand-400"
+              placeholder="Enter markdown resume..."
+            ></textarea>
+            <p class="text-[11px] text-slate-500 mt-1">
+              Saving updates both the markdown content and regenerates the high-resolution single-page ReportLab PDF.
+            </p>
+          </div>
+
+          <!-- Read-only Display -->
+          <div
+            v-else
+            class="p-4 rounded-lg bg-dark-950/80 border border-white/5 text-xs text-slate-200 font-mono leading-relaxed whitespace-pre-wrap select-all max-h-[600px] overflow-y-auto"
+          >
+            {{ assets.resume_markdown }}
+          </div>
+        </div>
+
+      </div>
+
       <!-- TAB 3: Hiring Contacts & Follow-Up Inboxes -->
       <div v-else-if="activeTab === 'contacts'" class="space-y-4">
         
@@ -729,28 +968,74 @@ watch(() => [props.companyName, props.jobTitle, props.source, props.isFounderLed
         </div>
 
         <!-- Follow-Up Message / Outreach Pitch -->
-        <div class="glass-card rounded-xl p-4 border border-white/10 space-y-3">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <Send class="w-4 h-4 text-brand-400" />
-              <span class="text-xs font-bold text-white">Pre-composed Follow-Up Outreach Pitch</span>
+        <div class="glass-card rounded-xl p-4 border border-white/10 space-y-4">
+          <div class="flex items-center gap-2">
+            <Send class="w-4 h-4 text-brand-400" />
+            <span class="text-xs font-bold text-white">Dynamic Outreach Pitch</span>
+          </div>
+          
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-400 mb-1">Recipient Persona</label>
+              <select v-model="outreachPersona" class="w-full bg-dark-900 border border-white/10 text-xs text-white rounded-lg p-2 focus:outline-none focus:border-brand-500">
+                <option value="technical_lead">Technical Lead (CTO, VP Eng)</option>
+                <option value="recruiter">Recruiter (TA, HR)</option>
+                <option value="founder">Founder (CEO, Co-founder)</option>
+              </select>
             </div>
-
-            <button
-              @click="copyToClipboard(followUpPitchMessage, 'pitch_msg')"
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-xs text-white font-semibold shadow-glow-blue transition-all"
-            >
-              <Check v-if="copiedField === 'pitch_msg'" class="w-3.5 h-3.5 text-white" />
-              <Copy v-else class="w-3.5 h-3.5 text-white" />
-              <span>{{ copiedField === 'pitch_msg' ? 'Copied Pitch!' : 'Copy Outreach Message' }}</span>
-            </button>
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-400 mb-1">Outreach Stage</label>
+              <select v-model="outreachType" class="w-full bg-dark-900 border border-white/10 text-xs text-white rounded-lg p-2 focus:outline-none focus:border-brand-500">
+                <option value="post_application">Post-Application Note</option>
+                <option value="direct_pitch">Direct Cold Pitch</option>
+                <option value="follow_up">Reply Thread Follow-Up</option>
+              </select>
+            </div>
           </div>
 
-          <textarea
-            v-model="followUpPitchMessage"
-            rows="8"
-            class="w-full p-3 rounded-lg bg-dark-950/80 border border-white/5 text-xs text-slate-200 font-mono leading-relaxed focus:outline-none focus:border-brand-500"
-          ></textarea>
+          <button
+            @click="generateOutreach"
+            :disabled="isGeneratingOutreach"
+            class="w-full py-2 bg-brand-600 hover:bg-brand-500 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-semibold text-white rounded-lg transition-all"
+          >
+            {{ isGeneratingOutreach ? 'Generating Outreach...' : 'Generate Precision Outreach Pitch' }}
+          </button>
+          
+          <div v-if="outreachError" class="text-xs text-red-400 p-2 bg-red-500/10 rounded-lg">
+            {{ outreachError }}
+          </div>
+
+          <div v-if="outreachSubjects.length > 0" class="space-y-2">
+            <label class="block text-[11px] font-semibold text-slate-400">Subject Options:</label>
+            <div class="grid gap-2">
+              <div v-for="(subject, idx) in outreachSubjects" :key="idx" class="flex items-center justify-between p-2 bg-dark-950 border border-white/5 rounded-lg">
+                <span class="text-xs text-slate-200">{{ subject }}</span>
+                <button @click="copyToClipboard(subject, `subject_${idx}`)" class="text-slate-400 hover:text-emerald-400 p-1">
+                  <Check v-if="copiedField === `subject_${idx}`" class="w-3.5 h-3.5" />
+                  <Copy v-else class="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="followUpPitchMessage" class="space-y-2">
+            <div class="flex items-center justify-between">
+              <label class="block text-[11px] font-semibold text-slate-400">Message Body:</label>
+              <button
+                @click="copyToClipboard(followUpPitchMessage, 'pitch_msg')"
+                class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-xs text-white font-semibold shadow-glow-blue transition-all"
+              >
+                <Check v-if="copiedField === 'pitch_msg'" class="w-3.5 h-3.5 text-white" />
+                <Copy v-else class="w-3.5 h-3.5 text-white" />
+                <span>{{ copiedField === 'pitch_msg' ? 'Copied Pitch!' : 'Copy Outreach Message' }}</span>
+              </button>
+            </div>
+            <textarea
+              v-model="followUpPitchMessage"
+              rows="8"
+              class="w-full p-3 rounded-lg bg-dark-950/80 border border-white/5 text-xs text-slate-200 font-mono leading-relaxed focus:outline-none focus:border-brand-500"
+            ></textarea>
+          </div>
         </div>
 
       </div>

@@ -12,8 +12,8 @@ from app.workers.celery_app import celery_app
 from app.database import AsyncSessionLocal
 from app.models import Job, ApplicationAsset, JobStatus
 from app.schemas import LLMTailorOutput
-from app.candidate_context import CANDIDATE_PROFILE, CANDIDATE_SYSTEM_PROMPT
-from app.utils.pdf_generator import generate_cover_letter_pdf
+from app.candidate_context import CANDIDATE_PROFILE, CANDIDATE_SYSTEM_PROMPT, CANDIDATE_BASE_RESUME
+from app.utils.pdf_generator import generate_cover_letter_pdf, generate_resume_pdf
 
 logger = logging.getLogger("llm_tailor")
 logging.basicConfig(level=logging.INFO)
@@ -64,7 +64,8 @@ Return a JSON object conforming strictly to this schema:
   "match_score": integer (0 to 100),
   "match_reasoning": string,
   "tech_stack_tags": ["list", "of", "technologies"],
-  "cover_letter_markdown": string (EXACTLY 4 PARAGRAPHS: Para 1 hook with {company_name}'s product, Para 2 technical alignment citing demo.e-nergie.co & ALN Riders, Para 3 scale/security proof citing Sycamore 400k+ users & 84%+ fraud reduction, Para 4 collaboration, relocation readiness from Lagos, Nigeria),
+  "cover_letter_markdown": string (STRICTLY 250-400 words, 3-5 paragraphs. Para 1: Header, Greeting, and Hook referencing {company_name}. Para 2-3: Evidence & ATS keywords weaving Sycamore/ALN Riders achievements with metrics like 84% fraud reduction, 400k+ users. Para 4: Employer-centric value and proactive close. Do not use 'To Whom It May Concern'),
+  "resume_markdown": string (ATS optimized resume tailoring the base resume to the job description. Use exact-match keywords, acronym expansion, reverse-chronological order, action-driven bullet points, and standard section headings),
   "ans_why_company_250": string (EXACTLY <= 250 characters),
   "ans_why_company_500": string (EXACTLY <= 500 characters),
   "ans_technical_challenge_250": string (EXACTLY <= 250 characters),
@@ -103,24 +104,51 @@ Return a JSON object conforming strictly to this schema:
         # 1. If LLM is available, craft a bespoke prompt honoring archetype + custom instructions
         if self.client:
             prompt = f"""
-You are writing a tailored, high-impact 4-paragraph cover letter for Emmanuel Okeibunor applying for {job_title} at {company_name}.
+# Role & Objective
+You are an expert career coach and technical copywriter. Your task is to generate tailored, high-converting, ATS-optimized cover letters for specific job applications based on the provided Candidate Profile, Job Description (JD), and Company Context.
+
+Applying for: {job_title} at {company_name}
 Role Archetype Focus: {archetype.upper()}
 Custom Directives from Candidate: {custom_instructions or "None"}
 
-Candidate Ground Truth:
+# Candidate Ground Truth:
 - Name: Emmanuel Okeibunor, based in Lagos, Nigeria (holds full readiness for global remote across time zones or full relocation).
-- Portfolio: https://okeibunoremma.work | Email: okeibunoremma@gmail.com
+- Portfolio: https://okeibunoremma.work | Email: okeibunoremma@gmail.com | Phone: +234 9015379412
 - Sycamore Experience: Led frontend/software engineering for fraud detection & risk-management platform (84%+ fraud reduction). Scaled Nuxt applications to 400,000+ active users & 5,000+ daily logins. Architected core investment and B2B merchant banking products. Championed LLM-assisted coding workflows.
 - ALN Riders Experience: Project Lead Engineer at ALN Riders (alnriders.com). Architected concurrent Golang backend services and Nuxt 4 frontends on Contabo Linux VPS, processing over $1M+ transaction value.
 - E-nergie Experience: Built https://demo.e-nergie.co, appliance energy optimization platform with heuristic NILM power classification in Python and FastAPI.
 - Pertinence & Numinix: Lead Frontend Developer on Oneapp (15k+ users) and built custom CI/CD pipelines.
 
-Structure & Style Guidelines:
-- Paragraph 1: Enthusiastic hook connecting with {company_name}'s mission, product challenges, and the specific responsibilities of {job_title}.
-- Paragraph 2: Direct alignment tailored specifically to the '{archetype}' archetype (e.g. if backend/systems: emphasize Golang concurrency, FastAPI, and data pipelines; if frontend/fullstack: emphasize Vue 3, Nuxt 4, TypeScript, and UI responsiveness; if devops: Docker, Linux VPS, CI/CD; if AI: NILM signals & LLM tooling).
-- Paragraph 3: Concrete scale & security metrics proof (Sycamore 400k+ users, 84%+ fraud reduction, ALN Riders $1M+ volume).
-- Paragraph 4: Collaborative culture, remote/relocation readiness from Lagos, Nigeria, and proactive close.
-Return ONLY the raw markdown of the 4 paragraphs. Do not include placeholder brackets or markdown fences.
+# Formatting & Constraints
+- **Length:** Strictly 250 to 400 words (3 to 5 concise paragraphs).
+- **Tone:** Professional, confident, specific, and value-driven. Avoid generic fluff or overly AI-sounding buzzwords.
+
+# Step-by-Step Structure
+## 1. Header & Greeting
+- Include standard business header with Name, City/Country, Phone, Email, Date, and Company Info.
+- Greeting: "Dear Hiring Manager," (Never use "To Whom It May Concern").
+
+## 2. Opening Paragraph (The Hook)
+- State the exact job title being applied for.
+- Express genuine interest by referencing a specific detail from the company (mission, product, etc.) and tie it directly to how your background contributes immediately.
+
+## 3. Body Paragraphs (1-2 Paragraphs: Evidence & ATS Alignment)
+- Select 2 to 3 core requirements from the Job Description.
+- Show, Don't Just Tell: Weave your most recent and relevant achievements (Sycamore, ALN Riders, etc.) into a concise narrative demonstrating problem-solving.
+- Quantify Impact: Back up claims with concrete metrics (e.g. 84%+ fraud reduction, 400k+ users, $1M+ transaction value).
+- ATS Keyword Mirroring: Naturally integrate exact terminology and tools from the job description.
+
+## 4. Closing Paragraph & Sign-off
+- Employer-Centric Value: Summarize how your track record helps the team hit its goals.
+- Call to Action & Gratitude: Thank the reader, reaffirm enthusiasm, and state you look forward to discussing how your experience aligns.
+- Sign-off: "Sincerely,\\nEmmanuel Okeibunor".
+
+# Strict Guardrails ("What to Avoid")
+1. Never fabricate metrics or experience. Only use achievements present in the Candidate Profile.
+2. Never focus solely on what the role does for the candidate—always frame enthusiasm around solving the employer's problems.
+3. Never write walls of text. Keep paragraphs focused and scannable.
+
+Return ONLY the raw markdown of the cover letter. Do not include placeholder brackets or markdown fences.
 """
             try:
                 resp = self.client.chat.completions.create(
@@ -228,6 +256,7 @@ Return ONLY the raw markdown of the 4 paragraphs. Do not include placeholder bra
             match_reasoning=reasoning,
             tech_stack_tags=detected_tags,
             cover_letter_markdown=cover_letter,
+            resume_markdown=CANDIDATE_BASE_RESUME,
             ans_why_company_250=clamp_text(f"{company_name}'s high-impact mission aligns with my passion for building scalable web apps with Nuxt, FastAPI, and Golang.", 250),
             ans_why_company_500=clamp_text(f"I admire {company_name}'s engineering focus. Having built platforms from fraud detection engines at Sycamore (400k+ users) to NILM energy analytics at e-nergie.co, I bring proven full-stack execution and ownership to your product roadmap.", 500),
             ans_technical_challenge_250=clamp_text("At Sycamore, I built an 84% fraud-reduction rules engine handling 400k+ users and sub-100ms evaluation without UI latency.", 250),
@@ -241,7 +270,7 @@ Return ONLY the raw markdown of the 4 paragraphs. Do not include placeholder bra
             logger.warning("No LLM API key configured. Using heuristic fallback.")
             return self._generate_heuristic_fallback(job_title, company_name, description)
 
-        system_prompt = CANDIDATE_SYSTEM_PROMPT
+        system_prompt = f"{CANDIDATE_SYSTEM_PROMPT}\n\nBASE RESUME TO OPTIMIZE:\n{CANDIDATE_BASE_RESUME}"
         user_prompt = self.build_tailor_prompt(job_title, company_name, description)
 
         try:
@@ -323,6 +352,13 @@ Return ONLY the raw markdown of the 4 paragraphs. Do not include placeholder bra
                 job_title=job.job_title,
                 cover_letter_markdown=tailored.cover_letter_markdown
             )
+            
+            resume_pdf_path_val = generate_resume_pdf(
+                candidate_name=CANDIDATE_PROFILE["name"],
+                company_name=job.company_name,
+                job_title=job.job_title,
+                resume_markdown=tailored.resume_markdown
+            )
 
             # Insert or update application asset
             asset_stmt = select(ApplicationAsset).where(ApplicationAsset.job_id == job.id)
@@ -334,6 +370,8 @@ Return ONLY the raw markdown of the 4 paragraphs. Do not include placeholder bra
                     job_id=job.id,
                     cover_letter_markdown=tailored.cover_letter_markdown,
                     cover_letter_pdf_path=pdf_path,
+                    resume_markdown=tailored.resume_markdown,
+                    resume_pdf_path=resume_pdf_path_val,
                     ans_why_company_250=tailored.ans_why_company_250,
                     ans_why_company_500=tailored.ans_why_company_500,
                     ans_technical_challenge_250=tailored.ans_technical_challenge_250,
@@ -346,6 +384,8 @@ Return ONLY the raw markdown of the 4 paragraphs. Do not include placeholder bra
             else:
                 asset.cover_letter_markdown = tailored.cover_letter_markdown
                 asset.cover_letter_pdf_path = pdf_path
+                asset.resume_markdown = tailored.resume_markdown
+                asset.resume_pdf_path = resume_pdf_path_val
                 asset.ans_why_company_250 = tailored.ans_why_company_250
                 asset.ans_why_company_500 = tailored.ans_why_company_500
                 asset.ans_technical_challenge_250 = tailored.ans_technical_challenge_250

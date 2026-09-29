@@ -75,6 +75,8 @@ CREATE TABLE IF NOT EXISTS application_assets (
     job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE UNIQUE,
     cover_letter_markdown TEXT NOT NULL,
     cover_letter_pdf_path TEXT,
+    resume_markdown TEXT,
+    resume_pdf_path TEXT,
     ans_why_company_250 VARCHAR(250) NOT NULL,
     ans_why_company_500 VARCHAR(500) NOT NULL,
     ans_technical_challenge_250 VARCHAR(250) NOT NULL,

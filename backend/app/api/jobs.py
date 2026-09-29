@@ -15,13 +15,14 @@ from app.schemas import (
     PaginatedJobsResponse, JobStatsResponse,
     CustomQuestionRequest, CustomQuestionResponse,
     HiringContactInfo, CoverLetterUpdateRequest, CoverLetterRegenerateRequest,
-    ApplicationAssetResponse
+    ResumeUpdateRequest, ResumeRegenerateRequest,
+    ApplicationAssetResponse, OutreachRequest, OutreachResponse
 )
 from app.config import settings
-from app.candidate_context import CANDIDATE_PROFILE, CANDIDATE_SYSTEM_PROMPT
+from app.candidate_context import CANDIDATE_PROFILE, CANDIDATE_SYSTEM_PROMPT, CANDIDATE_BASE_RESUME
 from app.workers.llm_tailor import clamp_text
 from app.utils.email_finder import extract_hiring_contacts
-from app.utils.pdf_generator import generate_cover_letter_pdf
+from app.utils.pdf_generator import generate_cover_letter_pdf, generate_resume_pdf
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
 
@@ -388,6 +389,137 @@ async def regenerate_cover_letter(
     return build_job_with_asset_response(job)
 
 
+@router.put("/{job_id}/resume", response_model=JobWithAssetResponse)
+async def update_resume(
+    job_id: uuid.UUID,
+    payload: ResumeUpdateRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    stmt = select(Job).options(selectinload(Job.assets)).where(Job.id == job_id)
+    res = await db.execute(stmt)
+    job = res.scalar_one_or_none()
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job with ID '{job_id}' not found."
+        )
+
+    pdf_path = generate_resume_pdf(
+        candidate_name=CANDIDATE_PROFILE["name"],
+        company_name=job.company_name,
+        job_title=job.job_title,
+        resume_markdown=payload.resume_markdown
+    )
+
+    if not job.assets:
+        job.assets = ApplicationAsset(
+            job_id=job.id,
+            cover_letter_markdown="Not generated yet",
+            resume_markdown=payload.resume_markdown,
+            resume_pdf_path=pdf_path,
+            ans_why_company_250="Excited by company mission.",
+            ans_why_company_500="Excited by company mission.",
+            ans_technical_challenge_250="N/A",
+            ans_technical_challenge_500="N/A",
+            ans_python_go_proficiency_220="N/A",
+            ans_location_relocation_220="N/A",
+            custom_qa={}
+        )
+        db.add(job.assets)
+    else:
+        job.assets.resume_markdown = payload.resume_markdown
+        job.assets.resume_pdf_path = pdf_path
+
+    await db.commit()
+    await db.refresh(job)
+    return build_job_with_asset_response(job)
+
+
+@router.post("/{job_id}/regenerate-resume", response_model=JobWithAssetResponse)
+async def regenerate_resume(
+    job_id: uuid.UUID,
+    payload: ResumeRegenerateRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    stmt = select(Job).options(selectinload(Job.assets)).where(Job.id == job_id)
+    res = await db.execute(stmt)
+    job = res.scalar_one_or_none()
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job with ID '{job_id}' not found."
+        )
+
+    llm_key = settings.effective_llm_key
+    if not llm_key:
+        raise HTTPException(status_code=400, detail="No LLM API key configured.")
+
+    base_url = settings.effective_base_url
+    client = OpenAI(api_key=llm_key, base_url=base_url) if base_url else OpenAI(api_key=llm_key)
+
+    system_prompt = f"{CANDIDATE_SYSTEM_PROMPT}\n\nBASE RESUME TO OPTIMIZE:\n{CANDIDATE_BASE_RESUME}"
+    prompt = f"""
+Analyze the following job opportunity and tailor the base resume for Emmanuel Okeibunor.
+
+Target Job:
+Company: {job.company_name}
+Title: {job.job_title}
+Job Description:
+{job.description_raw}
+Custom Directives: {payload.custom_instructions or "None"}
+
+Strict Rules:
+- Output ONLY the raw ATS-optimized markdown for the resume.
+- Use exact-match keywords from the job description.
+- Spell out acronyms at least once alongside short form.
+- Use reverse-chronological order and action-driven bullet points.
+- Standard section headings only.
+"""
+    try:
+        response = client.chat.completions.create(
+            model=settings.effective_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=2500
+        )
+        new_resume_markdown = response.choices[0].message.content.strip()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"LLM Generation failed: {str(e)}")
+
+    pdf_path = generate_resume_pdf(
+        candidate_name=CANDIDATE_PROFILE["name"],
+        company_name=job.company_name,
+        job_title=job.job_title,
+        resume_markdown=new_resume_markdown
+    )
+
+    if not job.assets:
+        job.assets = ApplicationAsset(
+            job_id=job.id,
+            cover_letter_markdown="Not generated yet",
+            resume_markdown=new_resume_markdown,
+            resume_pdf_path=pdf_path,
+            ans_why_company_250="Excited by company mission.",
+            ans_why_company_500="Excited by company mission.",
+            ans_technical_challenge_250="N/A",
+            ans_technical_challenge_500="N/A",
+            ans_python_go_proficiency_220="N/A",
+            ans_location_relocation_220="N/A",
+            custom_qa={}
+        )
+        db.add(job.assets)
+    else:
+        job.assets.resume_markdown = new_resume_markdown
+        job.assets.resume_pdf_path = pdf_path
+
+    await db.commit()
+    await db.refresh(job)
+    return build_job_with_asset_response(job)
+
+
 @router.post("/{job_id}/tailor", response_model=JobWithAssetResponse)
 async def tailor_single_job(
     job_id: uuid.UUID,
@@ -488,3 +620,96 @@ Do not exceed {payload.max_chars} characters under any circumstances!
         char_count=len(answer_text),
         answer=answer_text
     )
+
+
+@router.post("/{job_id}/outreach", response_model=OutreachResponse)
+async def generate_outreach_message(
+    job_id: uuid.UUID,
+    payload: OutreachRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    stmt = select(Job).where(Job.id == job_id)
+    result = await db.execute(stmt)
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job with ID '{job_id}' not found."
+        )
+
+    llm_key = settings.effective_llm_key
+    if not llm_key:
+        raise HTTPException(status_code=400, detail="No LLM API key configured.")
+
+    base_url = settings.effective_base_url
+    client = OpenAI(api_key=llm_key, base_url=base_url) if base_url else OpenAI(api_key=llm_key)
+
+    prompt = f"""
+# Role & Objective
+You are an elite executive recruiter and technical cold-outreach strategist. Your goal is to write an ultra-concise, high-reply-rate outreach email to a {payload.recipient_persona} regarding the {job.job_title} role at {job.company_name}.
+
+Target Company: {job.company_name}
+Target Role: {job.job_title}
+Job Description:
+{job.description_raw}
+
+# Candidate Profile
+{CANDIDATE_SYSTEM_PROMPT}
+
+# Core Constraints
+- **Word Count:** Strictly 75 to 125 words (excluding subject line and signature). Every sentence must earn its place.
+- **Formatting:** Short paragraphs (1–2 sentences max). Use at most 2–3 concise bullet points if highlighting technical proof.
+- **Zero Fluff:** Never start with "I hope this email finds you well," "My name is...", or "I am writing to express my interest." Jump straight into context in sentence 1.
+
+# Routing Context
+Recipient Persona: {payload.recipient_persona}
+- If `technical_lead`: Speak peer-to-peer. Focus on system architecture, tech stack overlap, shipping velocity, and production metrics. Skip HR buzzwords.
+- If `recruiter`: Make their screening job effortless. Highlight exact years of experience, core stack match from the JD, and immediate fit.
+- If `founder`: Focus on product ownership, business impact (revenue, retention, cost reduction, speed to market), and end-to-end execution.
+
+Outreach Stage: {payload.outreach_type}
+- If `post_application`: Mention you just submitted an application for the role and wanted to share a quick note on why your background is a direct match.
+- If `direct_pitch`: Pitch value directly around a recent company milestone, product launch, or engineering challenge without referencing an application portal.
+- If `follow_up`: Keep under 60 words. Reply-thread style. Gently bump the previous note and add one new micro-insight or link to a live project/GitHub repo.
+
+# Structure
+1. Subject Lines (Generate exactly 2 options).
+2. The Context Hook (1 natural sentence).
+3. The "Already Built This" Proof (1-2 hard-hitting, quantified wins connecting JD priority to candidate profile).
+4. Low-Friction CTA (A question that does not ask for a 30-min call).
+5. Signature Block:
+Emmanuel Okeibunor
+Software Engineer | Vue, Nuxt, Python, Golang
+linkedin.com/in/okeibunor-emmanuel | okeibunoremma.work | +234 9015379412
+
+Respond EXACTLY with this JSON structure:
+{{
+    "subject_1": "Subject option 1",
+    "subject_2": "Subject option 2",
+    "body": "The full outreach message body including the signature"
+}}
+"""
+
+    try:
+        response = client.chat.completions.create(
+            model=settings.effective_model,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.3,
+            max_tokens=500
+        )
+        import json
+        raw_json = response.choices[0].message.content or "{}"
+        parsed = json.loads(raw_json)
+        
+        return OutreachResponse(
+            job_id=job.id,
+            subject_1=parsed.get("subject_1", f"{job.job_title} — Software Engineering experience"),
+            subject_2=parsed.get("subject_2", f"Quick question re: {job.company_name}'s Engineering Team"),
+            body=parsed.get("body", "Error generating body.")
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"LLM Generation failed: {str(e)}")
+

@@ -14,11 +14,12 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://:jate_redis_password_2026@redis:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://:jate_redis_password_2026@redis:6379/1"
 
-    # LLM Provider: OpenAI or Google Gemini
+    # LLM Provider: OpenAI, Google Gemini, or DeepSeek
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o-mini"
     OPENAI_BASE_URL: Optional[str] = None
     GEMINI_API_KEY: str = ""
+    DEEPSEEK_API_KEY: str = ""
 
     # Storage
     STORAGE_DIR: str = "/app/storage/pdfs"
@@ -36,6 +37,8 @@ class Settings(BaseSettings):
 
     @property
     def effective_llm_key(self) -> str:
+        if self.DEEPSEEK_API_KEY.strip():
+            return self.DEEPSEEK_API_KEY.strip()
         if self.GEMINI_API_KEY.strip():
             return self.GEMINI_API_KEY.strip()
         return self.OPENAI_API_KEY.strip()
@@ -43,18 +46,29 @@ class Settings(BaseSettings):
     @property
     def is_gemini(self) -> bool:
         key = self.effective_llm_key
-        return bool(self.GEMINI_API_KEY.strip()) or key.startswith("AIza")
+        return (bool(self.GEMINI_API_KEY.strip()) and key == self.GEMINI_API_KEY.strip()) or key.startswith("AIza")
+
+    @property
+    def is_deepseek(self) -> bool:
+        key = self.effective_llm_key
+        return bool(self.DEEPSEEK_API_KEY.strip()) and key == self.DEEPSEEK_API_KEY.strip()
 
     @property
     def effective_base_url(self) -> Optional[str]:
         if self.OPENAI_BASE_URL and self.OPENAI_BASE_URL.strip():
             return self.OPENAI_BASE_URL.strip()
+        if self.is_deepseek:
+            return "https://api.deepseek.com/v1"
         if self.is_gemini:
             return "https://generativelanguage.googleapis.com/v1beta/openai/"
         return None
 
     @property
     def effective_model(self) -> str:
+        if self.is_deepseek:
+            if "deepseek" in self.OPENAI_MODEL.lower():
+                return self.OPENAI_MODEL
+            return "deepseek-chat"
         if self.is_gemini:
             # If user explicitly specified a gemini model that isn't deprecated, use it; otherwise default to gemini-flash-latest
             if "gemini" in self.OPENAI_MODEL.lower() and "1.5" not in self.OPENAI_MODEL and "2.5" not in self.OPENAI_MODEL:

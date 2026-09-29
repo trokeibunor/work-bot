@@ -9,6 +9,8 @@ from app.models import JobStatus, JobSource
 class ApplicationAssetBase(BaseModel):
     cover_letter_markdown: str
     cover_letter_pdf_path: Optional[str] = None
+    resume_markdown: Optional[str] = None
+    resume_pdf_path: Optional[str] = None
     ans_why_company_250: str = Field(..., max_length=250)
     ans_why_company_500: str = Field(..., max_length=500)
     ans_technical_challenge_250: str = Field(..., max_length=250)
@@ -82,6 +84,14 @@ class CoverLetterRegenerateRequest(BaseModel):
     custom_instructions: Optional[str] = Field(default=None, description="Additional custom instructions")
 
 
+class ResumeUpdateRequest(BaseModel):
+    resume_markdown: str = Field(..., min_length=100)
+
+
+class ResumeRegenerateRequest(BaseModel):
+    custom_instructions: Optional[str] = Field(default=None, description="Additional custom instructions")
+
+
 class PaginatedJobsResponse(BaseModel):
     items: List[JobWithAssetResponse]
     total: int
@@ -117,6 +127,18 @@ class CustomQuestionResponse(BaseModel):
     answer: str
 
 
+class OutreachRequest(BaseModel):
+    recipient_persona: str = Field(default="technical_lead", description="Persona of the recipient: technical_lead, recruiter, founder")
+    outreach_type: str = Field(default="post_application", description="Type of outreach: post_application, direct_pitch, follow_up")
+
+
+class OutreachResponse(BaseModel):
+    job_id: uuid.UUID
+    subject_1: str
+    subject_2: str
+    body: str
+
+
 class DailyMetricsResponse(BaseModel):
     today_applied: int
     daily_target: int
@@ -137,6 +159,7 @@ class LLMTailorOutput(BaseModel):
     match_reasoning: str = Field(..., description="Concise rationale explaining the score")
     tech_stack_tags: List[str] = Field(default_factory=list, description="Technologies detected in the job")
     cover_letter_markdown: str = Field(..., description="Tailored 4-paragraph cover letter strictly following guidelines")
+    resume_markdown: str = Field(..., description="Tailored ATS-friendly markdown resume mirroring keywords from job description")
     ans_why_company_250: str = Field(..., max_length=250, description="Strictly <= 250 characters answer to why this company")
     ans_why_company_500: str = Field(..., max_length=500, description="Strictly <= 500 characters answer to why this company")
     ans_technical_challenge_250: str = Field(..., max_length=250, description="Strictly <= 250 characters technical challenge answer")
