@@ -28,7 +28,8 @@ BEGIN
             'ashby',
             'workable',
             'reddit',
-            'hackernews'
+            'hackernews',
+            'manual'
         );
     END IF;
 END$$;

@@ -2,7 +2,7 @@ import math
 import uuid
 from datetime import datetime, timedelta
 from typing import List, Optional, Union
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status, UploadFile, File, Form
 from sqlalchemy import select, update, desc, asc, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -16,13 +16,22 @@ from app.schemas import (
     CustomQuestionRequest, CustomQuestionResponse,
     HiringContactInfo, CoverLetterUpdateRequest, CoverLetterRegenerateRequest,
     ResumeUpdateRequest, ResumeRegenerateRequest,
-    ApplicationAssetResponse, OutreachRequest, OutreachResponse
+    ApplicationAssetResponse, OutreachRequest, OutreachResponse,
+    JobIngestUrlsRequest, JobIngestTextRequest, JobIngestResponse, IngestedJobItemResult
 )
 from app.config import settings
 from app.candidate_context import CANDIDATE_PROFILE, CANDIDATE_SYSTEM_PROMPT, CANDIDATE_BASE_RESUME
 from app.workers.llm_tailor import clamp_text
 from app.utils.email_finder import extract_hiring_contacts
 from app.utils.pdf_generator import generate_cover_letter_pdf, generate_resume_pdf
+from app.utils.job_parser import (
+    parse_pdf_bytes,
+    parse_csv_bytes,
+    parse_xlsx_bytes,
+    scrape_job_from_url,
+    parse_raw_text_input,
+    execute_job_ingest_pipeline,
+)
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
 
@@ -712,4 +721,143 @@ Respond EXACTLY with this JSON structure:
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LLM Generation failed: {str(e)}")
+
+
+@router.post("/ingest/file", response_model=JobIngestResponse)
+async def ingest_jobs_from_file(
+    file: UploadFile = File(...),
+    bypass_filter: bool = Form(True),
+    tailor_now: bool = Form(True),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Ingest opportunities from uploaded PDF, CSV, or XLSX files.
+    Runs extraction, deduplication, keyword pre-filter check, and queues LLM tailoring.
+    """
+    # 1. Validate file extension and MIME
+    filename = file.filename or "uploaded_file"
+    ext = filename.lower().split(".")[-1] if "." in filename else ""
+    if ext not in ("pdf", "csv", "xlsx", "xls"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported file format '.{ext}'. Supported formats are: .pdf, .csv, .xlsx."
+        )
+
+    # 2. Read file contents with 15MB limit
+    max_size = 15 * 1024 * 1024
+    content = await file.read()
+    if len(content) > max_size:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File size exceeds maximum allowed limit of 15MB."
+        )
+    if len(content) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file is empty."
+        )
+
+    # 3. Parse according to format
+    try:
+        if ext == "pdf":
+            parsed_jobs = parse_pdf_bytes(content, filename=filename)
+        elif ext == "csv":
+            parsed_jobs = parse_csv_bytes(content, filename=filename)
+        else:  # xlsx / xls
+            parsed_jobs = parse_xlsx_bytes(content, filename=filename)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Failed to parse {filename}: {str(e)}"
+        )
+
+    # 4. Execute ingestion and scoring pipeline
+    response = await execute_job_ingest_pipeline(
+        jobs_data=parsed_jobs,
+        bypass_filter=bypass_filter,
+        tailor_now=tailor_now,
+        session=db
+    )
+    return response
+
+
+@router.post("/ingest/urls", response_model=JobIngestResponse)
+async def ingest_jobs_from_urls(
+    payload: JobIngestUrlsRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Scrape and ingest job postings from links (Greenhouse, Lever, Ashby, Workable, LinkedIn, direct career pages).
+    Applies SSRF protection, extracts content, and queues full tailoring engine.
+    """
+    if not payload.urls:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one URL must be provided."
+        )
+
+    parsed_jobs = []
+    skipped_results = []
+
+    for raw_url in payload.urls:
+        url = raw_url.strip()
+        if not url:
+            continue
+        try:
+            job_data = await scrape_job_from_url(url)
+            parsed_jobs.append(job_data)
+        except Exception as e:
+            skipped_results.append(IngestedJobItemResult(
+                job_title="Unknown",
+                company_name="Web Scraper",
+                source_url=url,
+                status="rejected",
+                action_taken="error",
+                error_message=f"Failed to scrape URL: {str(e)}"
+            ))
+
+    response = await execute_job_ingest_pipeline(
+        jobs_data=parsed_jobs,
+        bypass_filter=payload.bypass_filter,
+        tailor_now=payload.tailor_now,
+        session=db
+    )
+
+    # Merge any scrape errors
+    response.results.extend(skipped_results)
+    response.total_received += len(skipped_results)
+    response.total_rejected += len(skipped_results)
+    return response
+
+
+@router.post("/ingest/text", response_model=JobIngestResponse)
+async def ingest_jobs_from_text(
+    payload: JobIngestTextRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Ingest job description from pasted raw text (single job or multiple jobs delimited by '---').
+    Auto-detects title, company, stack via LLM or heuristics if omitted.
+    """
+    try:
+        parsed_jobs = parse_raw_text_input(
+            raw_text=payload.text,
+            override_title=payload.job_title,
+            override_company=payload.company_name,
+            override_location=payload.location_raw,
+            source_url=payload.source_url
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Failed to parse job text: {str(e)}"
+        )
+
+    response = await execute_job_ingest_pipeline(
+        jobs_data=parsed_jobs,
+        bypass_filter=payload.bypass_filter,
+        tailor_now=payload.tailor_now,
+        session=db
+    )
+    return response
 

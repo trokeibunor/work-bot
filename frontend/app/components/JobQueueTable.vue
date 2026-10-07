@@ -222,6 +222,7 @@ const getSourceBadgeClass = (src: string) => {
     case 'ashby': return 'bg-purple-950/80 text-purple-300 border-purple-800/40'
     case 'reddit': return 'bg-orange-950/80 text-orange-300 border-orange-800/40'
     case 'hackernews': return 'bg-amber-950/80 text-amber-300 border-amber-800/40'
+    case 'manual': return 'bg-fuchsia-950/80 text-fuchsia-300 border-fuchsia-800/40'
     default: return 'bg-slate-800 text-slate-300 border-slate-700'
   }
 }
@@ -531,6 +532,7 @@ defineExpose({
             class="bg-transparent text-white font-medium focus:outline-none cursor-pointer pr-1 uppercase text-xs"
           >
             <option value="all" class="bg-dark-900 text-white">All Sources</option>
+            <option value="manual" class="bg-dark-900 text-white">Manual / Uploaded</option>
             <option value="hackernews" class="bg-dark-900 text-white">Hacker News</option>
             <option value="reddit" class="bg-dark-900 text-white">Reddit</option>
             <option value="greenhouse" class="bg-dark-900 text-white">Greenhouse</option>

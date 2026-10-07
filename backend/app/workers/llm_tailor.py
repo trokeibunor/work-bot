@@ -300,6 +300,17 @@ Return ONLY the raw markdown of the cover letter. Do not include placeholder bra
                 )
                 raw_json = response.choices[0].message.content or "{}"
                 parsed_data = json.loads(raw_json)
+                if isinstance(parsed_data, dict):
+                    for k, limit in [
+                        ("ans_why_company_250", 250),
+                        ("ans_why_company_500", 500),
+                        ("ans_technical_challenge_250", 250),
+                        ("ans_technical_challenge_500", 500),
+                        ("ans_python_go_proficiency_220", 220),
+                        ("ans_location_relocation_220", 220),
+                    ]:
+                        if k in parsed_data and isinstance(parsed_data[k], str):
+                            parsed_data[k] = clamp_text(parsed_data[k], limit)
                 output = LLMTailorOutput.model_validate(parsed_data)
             except Exception as llm_err:
                 logger.warning(f"LLM API completion failed ({llm_err}). Falling back to intelligent heuristic tailoring.")

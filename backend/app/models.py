@@ -30,6 +30,7 @@ class JobSource(str, enum.Enum):
     WORKABLE = "workable"
     REDDIT = "reddit"
     HACKERNEWS = "hackernews"
+    MANUAL = "manual"
 
 
 def get_enum_values(enum_cls):

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import JobQueueTable from '~/components/JobQueueTable.vue'
-import { RefreshCw, Zap, Rocket, CheckCircle2 } from 'lucide-vue-next'
+import JobIngestModal from '~/components/JobIngestModal.vue'
+import { RefreshCw, Zap, Rocket, CheckCircle2, UploadCloud } from 'lucide-vue-next'
 
 const config = useRuntimeConfig()
 const apiBase = config.public.apiBase ?? 'http://localhost:8000'
@@ -11,6 +12,14 @@ const tailoringInProgress = ref(false)
 const isScrapingCommunity = ref(false)
 const isRefreshing = ref(false)
 const notificationMsg = ref('')
+const showIngestModal = ref(false)
+
+const onJobsIngested = async (count: number) => {
+  notificationMsg.value = `Successfully ingested ${count} job opportunities into the triage pipeline!`
+  setTimeout(() => { notificationMsg.value = '' }, 5000)
+  await queueTableRef.value?.fetchStats()
+  await queueTableRef.value?.fetchJobs(true)
+}
 
 const triggerCommunityScraper = async () => {
   if (isScrapingCommunity.value) return
@@ -78,6 +87,15 @@ const handleRefresh = async () => {
       <!-- Quick Metrics Ribbon -->
       <div class="flex flex-wrap items-center gap-2">
         <button
+          @click="showIngestModal = true"
+          class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white text-xs font-semibold shadow-glow-blue transition-all"
+          title="Upload PDF, CSV, Excel or paste links/descriptions to run full scraping & tailoring pipeline"
+        >
+          <UploadCloud class="w-3.5 h-3.5" />
+          <span>Ingest Opportunities</span>
+        </button>
+
+        <button
           @click="triggerCommunityScraper"
           :disabled="isScrapingCommunity"
           class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white text-xs font-semibold shadow-glow-amber transition-all disabled:opacity-50"
@@ -120,6 +138,14 @@ const handleRefresh = async () => {
     <JobQueueTable
       ref="queueTableRef"
       :api-base="apiBase"
+    />
+
+    <!-- Ingest & Scrape Opportunities Modal -->
+    <JobIngestModal
+      :show="showIngestModal"
+      :api-base="apiBase"
+      @close="showIngestModal = false"
+      @ingested="onJobsIngested"
     />
   </div>
 </template>

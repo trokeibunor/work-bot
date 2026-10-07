@@ -166,3 +166,40 @@ class LLMTailorOutput(BaseModel):
     ans_technical_challenge_500: str = Field(..., max_length=500, description="Strictly <= 500 characters technical challenge answer")
     ans_python_go_proficiency_220: str = Field(..., max_length=220, description="Strictly <= 220 characters Python and Go proficiency summary")
     ans_location_relocation_220: str = Field(..., max_length=220, description="Strictly <= 220 characters Lagos, Nigeria location & relocation readiness")
+
+
+# Job Ingestion Schemas
+class JobIngestUrlsRequest(BaseModel):
+    urls: List[str] = Field(..., min_length=1, description="List of job posting URLs to scrape and ingest")
+    bypass_filter: bool = Field(default=True, description="If True, bypasses keyword pre-filter")
+    tailor_now: bool = Field(default=True, description="If True, triggers LLM tailoring immediately")
+
+
+class JobIngestTextRequest(BaseModel):
+    text: str = Field(..., min_length=20, description="Raw job description or multi-job text")
+    job_title: Optional[str] = Field(default=None, description="Optional override job title")
+    company_name: Optional[str] = Field(default=None, description="Optional override company name")
+    location_raw: Optional[str] = Field(default=None, description="Optional location")
+    source_url: Optional[str] = Field(default=None, description="Optional original URL")
+    bypass_filter: bool = Field(default=True, description="If True, bypasses keyword pre-filter")
+    tailor_now: bool = Field(default=True, description="If True, triggers LLM tailoring immediately")
+
+
+class IngestedJobItemResult(BaseModel):
+    id: Optional[uuid.UUID] = None
+    job_title: str
+    company_name: str
+    source_url: str
+    status: str
+    match_score: Optional[int] = None
+    action_taken: str  # "queued_for_llm", "tailored", "duplicate_skipped", "filter_rejected", "error"
+    error_message: Optional[str] = None
+
+
+class JobIngestResponse(BaseModel):
+    total_received: int
+    total_processed: int
+    total_queued: int
+    total_duplicates: int
+    total_rejected: int
+    results: List[IngestedJobItemResult]
