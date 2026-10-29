@@ -1,5 +1,6 @@
 import os
 import re
+from html import escape
 from typing import Optional
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
@@ -18,7 +19,8 @@ def generate_cover_letter_pdf(
     company_name: str,
     job_title: str,
     cover_letter_markdown: str,
-    output_dir: Optional[str] = None
+    output_dir: Optional[str] = None,
+    candidate_contact: Optional[dict] = None
 ) -> str:
     """
     Compiles cover letter markdown into a sleek, professional,
@@ -28,7 +30,7 @@ def generate_cover_letter_pdf(
     os.makedirs(target_dir, exist_ok=True)
 
     company_slug = sanitize_filename(company_name)
-    filename = f"Emmanuel_Okeibunor_Cover_Letter_{company_slug}.pdf"
+    filename = f"{sanitize_filename(candidate_name) or 'Candidate'}_Cover_Letter_{company_slug}.pdf"
     file_path = os.path.join(target_dir, filename)
 
     # Document setup with compact 0.5 inch margins to ensure single-page fit
@@ -98,22 +100,19 @@ def generate_cover_letter_pdf(
     story = []
 
     # Header
-    story.append(Paragraph("EMMANUEL OKEIBUNOR", header_name_style))
-    contact_line = (
-        "Lagos, Nigeria (Open to Relocation & Remote) &nbsp;|&nbsp; "
-        "okeibunoremma@gmail.com &nbsp;|&nbsp; "
-        "+234 9015379412 &nbsp;|&nbsp; "
-        "okeibunoremma.work"
-    )
-    story.append(Paragraph(contact_line, header_sub_style))
+    story.append(Paragraph(escape(candidate_name), header_name_style))
+    contact_line = ' | '.join(escape(str(v)) for v in (candidate_contact or {}).values() if v)
+    if contact_line:
+        story.append(Paragraph(contact_line, header_sub_style))
     story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#CBD5E1"), spaceAfter=10))
 
     # Re: Line
-    story.append(Paragraph(f"<b>Application:</b> {job_title} &mdash; <i>{company_name}</i>", meta_style))
+    story.append(Paragraph(f"<b>Application:</b> {escape(job_title)} &mdash; <i>{escape(company_name)}</i>", meta_style))
 
     # Process markdown paragraphs
     # Strip any markdown symbols like # or *
-    clean_text = cover_letter_markdown.replace("**", "<b>").replace("__", "<b>")
+    clean_text = escape(cover_letter_markdown)
+    clean_text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", clean_text)
     paragraphs = [p.strip() for p in clean_text.split("\n\n") if p.strip()]
 
     for p in paragraphs:
@@ -122,7 +121,7 @@ def generate_cover_letter_pdf(
         story.append(Paragraph(clean_p, body_style))
 
     # Signoff
-    story.append(Paragraph("Sincerely,<br/><b>Emmanuel Okeibunor</b>", signoff_style))
+    # The approved letter already includes its own sign-off.
 
     # Build PDF
     doc.build(story)
@@ -144,7 +143,7 @@ def generate_resume_pdf(
     os.makedirs(target_dir, exist_ok=True)
 
     company_slug = sanitize_filename(company_name)
-    filename = f"Emmanuel_Okeibunor_Resume_{company_slug}.pdf"
+    filename = f"{sanitize_filename(candidate_name) or 'Candidate'}_Resume_{company_slug}.pdf"
     file_path = os.path.join(target_dir, filename)
 
     doc = SimpleDocTemplate(
@@ -224,6 +223,8 @@ def generate_resume_pdf(
         if not line:
             continue
             
+        line = escape(line)
+
         # Avoid double b tags
         line = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', line)
         line = re.sub(r'__(.+?)__', r'<b>\1</b>', line)

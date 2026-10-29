@@ -1,12 +1,13 @@
 import uuid
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 from pydantic import BaseModel, Field, ConfigDict
 from app.models import JobStatus, JobSource
 
 
 # Asset Schemas
 class ApplicationAssetBase(BaseModel):
+    candidate_snapshot: Optional[Dict[str, Any]] = None
     cover_letter_markdown: str
     cover_letter_pdf_path: Optional[str] = None
     resume_markdown: Optional[str] = None
@@ -41,6 +42,7 @@ class JobBase(BaseModel):
     tech_stack_tags: List[str] = Field(default_factory=list)
     match_score: int = Field(default=0, ge=0, le=100)
     match_reasoning: Optional[str] = None
+    organization_type: str = "unknown"
     is_founder_led: bool = False
     status: JobStatus = JobStatus.NEW
 
@@ -165,7 +167,7 @@ class LLMTailorOutput(BaseModel):
     ans_technical_challenge_250: str = Field(..., max_length=250, description="Strictly <= 250 characters technical challenge answer")
     ans_technical_challenge_500: str = Field(..., max_length=500, description="Strictly <= 500 characters technical challenge answer")
     ans_python_go_proficiency_220: str = Field(..., max_length=220, description="Strictly <= 220 characters Python and Go proficiency summary")
-    ans_location_relocation_220: str = Field(..., max_length=220, description="Strictly <= 220 characters Lagos, Nigeria location & relocation readiness")
+    ans_location_relocation_220: str = Field(..., max_length=220, description="Strictly <= 220 characters confirmed location and work preferences")
 
 
 # Job Ingestion Schemas
@@ -203,3 +205,9 @@ class JobIngestResponse(BaseModel):
     total_duplicates: int
     total_rejected: int
     results: List[IngestedJobItemResult]
+
+
+class BulkJobRequest(BaseModel):
+    action: Literal["ignore", "restore", "prepare", "mark_applied"]
+    job_ids: List[uuid.UUID] = Field(min_length=1, max_length=100)
+    previous_statuses: Dict[uuid.UUID, JobStatus] = Field(default_factory=dict)

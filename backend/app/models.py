@@ -1,10 +1,10 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
 from sqlalchemy import (
-    String, Text, Boolean, Integer, DateTime, ForeignKey, Index, func, CheckConstraint
+    String, Text, Boolean, Integer, DateTime, ForeignKey, Index, func, CheckConstraint, Computed
 )
 from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB, ENUM
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -55,6 +55,9 @@ class TargetCompany(Base):
         return f"<TargetCompany {self.name} ({self.ats_provider}:{self.ats_slug})>"
 
 
+ORGANIZATION_EXPRESSION = r"""CASE WHEN (company_name || ' ' || description_raw) ~* '\m(non[- ]?profit|not[- ]for[- ]profit|non[- ]governmental|ngo|charitable|charity|501\(c\)\(3\))\M' THEN 'nonprofit' ELSE 'unknown' END"""
+
+
 class Job(Base):
     __tablename__ = "jobs"
 
@@ -68,6 +71,7 @@ class Job(Base):
     source_url: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     company_name: Mapped[str] = mapped_column(Text, nullable=False)
     job_title: Mapped[str] = mapped_column(Text, nullable=False)
+    organization_type: Mapped[str] = mapped_column(String(20), Computed(ORGANIZATION_EXPRESSION, persisted=True))
     location_raw: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_remote_or_relocation_friendly: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     description_raw: Mapped[str] = mapped_column(Text, nullable=False)
@@ -118,6 +122,7 @@ class ApplicationAsset(Base):
     job_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), unique=True, nullable=False
     )
+    candidate_snapshot: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     cover_letter_markdown: Mapped[str] = mapped_column(Text, nullable=False)
     cover_letter_pdf_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     resume_markdown: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -141,3 +146,34 @@ class ApplicationAsset(Base):
 
     def __repr__(self) -> str:
         return f"<ApplicationAsset for Job {self.job_id}>"
+
+
+class CandidateProfile(Base):
+    __tablename__ = 'candidate_profiles'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    active_version_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+
+
+class CandidateVersion(Base):
+    __tablename__ = 'candidate_versions'
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    data: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    master_resume: Mapped[str] = mapped_column(Text, nullable=False)
+    source_ids: Mapped[List[str]] = mapped_column(JSONB, default=list, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CandidateSource(Base):
+    __tablename__ = 'candidate_sources'
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    file_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    raw_text: Mapped[str] = mapped_column(Text, default='', nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default='queued', nullable=False)
+    proposal: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    base_version_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    approved_version_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=lambda: datetime.now(timezone.utc))

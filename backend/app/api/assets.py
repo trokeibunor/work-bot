@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import Job, ApplicationAsset
 from app.config import settings
-from app.candidate_context import CANDIDATE_PROFILE
+from app.services.candidate_profile import legacy_context
 from app.utils.pdf_generator import generate_cover_letter_pdf, generate_resume_pdf, sanitize_filename
 
 router = APIRouter(prefix="/assets", tags=["Assets"])
@@ -40,13 +40,18 @@ async def get_cover_letter_pdf(
         )
 
     pdf_path = asset.cover_letter_pdf_path
-    if not pdf_path or not os.path.exists(pdf_path):
+    candidate = (getattr(asset, "candidate_snapshot", None) or legacy_context().snapshot())["data"]
+    candidate_name = candidate.get("name") or "Candidate"
+    job_storage = Path(settings.STORAGE_DIR) / str(job_id)
+    if not pdf_path or Path(pdf_path).parent != job_storage or not os.path.exists(pdf_path):
         # Generate on the fly if file is missing
         pdf_path = generate_cover_letter_pdf(
-            candidate_name=CANDIDATE_PROFILE["name"],
+            candidate_name=candidate_name,
             company_name=job.company_name,
             job_title=job.job_title,
-            cover_letter_markdown=asset.cover_letter_markdown
+            cover_letter_markdown=asset.cover_letter_markdown,
+            candidate_contact=candidate.get("contact", {}),
+            output_dir=str(job_storage)
         )
         asset.cover_letter_pdf_path = pdf_path
         await db.commit()
@@ -54,14 +59,14 @@ async def get_cover_letter_pdf(
     # Path traversal security check
     real_path = Path(pdf_path).resolve()
     base_storage = Path(settings.STORAGE_DIR).resolve()
-    if not str(real_path).startswith(str(base_storage)):
+    if not real_path.is_relative_to(base_storage):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access to specified file path is denied."
         )
 
     company_slug = sanitize_filename(job.company_name)
-    download_filename = f"Emmanuel_Okeibunor_Cover_Letter_{company_slug}.pdf"
+    download_filename = f"{sanitize_filename(candidate_name)}_Cover_Letter_{company_slug}.pdf"
 
     return FileResponse(
         path=str(real_path),
@@ -102,13 +107,17 @@ async def get_resume_pdf(
         )
 
     pdf_path = asset.resume_pdf_path
-    if not pdf_path or not os.path.exists(pdf_path):
+    candidate = (getattr(asset, "candidate_snapshot", None) or legacy_context().snapshot())["data"]
+    candidate_name = candidate.get("name") or "Candidate"
+    job_storage = Path(settings.STORAGE_DIR) / str(job_id)
+    if not pdf_path or Path(pdf_path).parent != job_storage or not os.path.exists(pdf_path):
         # Generate on the fly if file is missing
         pdf_path = generate_resume_pdf(
-            candidate_name=CANDIDATE_PROFILE["name"],
+            candidate_name=candidate_name,
             company_name=job.company_name,
             job_title=job.job_title,
-            resume_markdown=asset.resume_markdown
+            resume_markdown=asset.resume_markdown,
+            output_dir=str(job_storage)
         )
         asset.resume_pdf_path = pdf_path
         await db.commit()
@@ -116,14 +125,14 @@ async def get_resume_pdf(
     # Path traversal security check
     real_path = Path(pdf_path).resolve()
     base_storage = Path(settings.STORAGE_DIR).resolve()
-    if not str(real_path).startswith(str(base_storage)):
+    if not real_path.is_relative_to(base_storage):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access to specified file path is denied."
         )
 
     company_slug = sanitize_filename(job.company_name)
-    download_filename = f"Emmanuel_Okeibunor_Resume_{company_slug}.pdf"
+    download_filename = f"{sanitize_filename(candidate_name)}_Resume_{company_slug}.pdf"
 
     return FileResponse(
         path=str(real_path),

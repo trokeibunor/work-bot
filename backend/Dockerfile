@@ -1,38 +1,24 @@
-FROM python:3.12-slim
+FROM python:3.12-slim AS builder
+WORKDIR /build
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
+    && rm -rf /var/lib/apt/lists/*
+COPY requirements.txt .
+RUN python -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
-# Prevent Python from writing .pyc files and enable unbuffered logging
+FROM python:3.12-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
-
+    PYTHONPATH=/app \
+    PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
-
-# Install system dependencies required for asyncpg, psycopg, reportlab, and healthchecks
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    build-essential \
-    libpq-dev \
-    postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
-
-# Create non-root user and persistent storage directories
-RUN groupadd -r jategroup && useradd -r -g jategroup -u 1001 jateuser && \
-    mkdir -p /app/storage/pdfs && \
-    chown -R jateuser:jategroup /app
-
-# Copy application source code and entrypoint
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
-
-COPY app /app/app
-RUN chown -R jateuser:jategroup /app
-
+# pg_isready is used by the entrypoint; curl is used by the API healthcheck.
+RUN apt-get update && apt-get install -y --no-install-recommends curl postgresql-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r jategroup && useradd -r -g jategroup -u 1001 jateuser \
+    && mkdir -p /app/storage/pdfs && chown -R jateuser:jategroup /app
+COPY --from=builder /opt/venv /opt/venv
+COPY --chown=1001:1001 --chmod=755 entrypoint.sh /app/entrypoint.sh
+COPY --chown=1001:1001 app /app/app
 USER 1001:1001
-
 ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

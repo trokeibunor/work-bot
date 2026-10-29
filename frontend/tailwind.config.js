@@ -9,21 +9,23 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['"Plus Jakarta Sans"', 'system-ui', 'sans-serif'],
+        sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'system-ui', 'sans-serif'],
         mono: ['"JetBrains Mono"', 'monospace']
       },
       colors: {
         dark: {
-          950: '#070A11',
-          900: '#0B0F19',
-          850: '#101524',
-          800: '#161D31',
-          700: '#1F2942',
-          600: '#2C3A5E'
+          950: '#17191D',
+          900: '#14161A',
+          850: '#1D2025',
+          800: '#25292F',
+          700: '#33373F',
+          600: '#4A505B'
         },
         brand: {
-          500: '#3B82F6',
-          600: '#2563EB',
+          300: '#93C5FD',
+          400: '#60A5FA',
+          500: '#4568DF',
+          600: '#4568DF',
           accent: '#10B981',
           purple: '#8B5CF6'
         }

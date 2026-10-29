@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import {
   Copy, Check, Sparkles, Send, FileText, HelpCircle,
   MessageSquare, Mail, Edit3, Save, RefreshCw, Download,
@@ -9,6 +10,7 @@ import {
 
 interface AssetData {
   id: string
+  candidate_snapshot?: {data:{name:string},version_id:string}
   cover_letter_markdown: string
   cover_letter_pdf_path?: string
   resume_markdown: string
@@ -47,12 +49,14 @@ const config = useRuntimeConfig()
 const apiBase = config.public.apiBase ?? 'http://localhost:8000'
 
 // Active Tab
-const activeTab = ref<'answers' | 'cover_letter' | 'resume' | 'contacts' | 'adhoc'>('answers')
+const activeTab = ref<'answers' | 'cover_letter' | 'resume' | 'contacts' | 'adhoc'>('cover_letter')
 
 // Copy state tracking
 const copiedField = ref<string | null>(null)
+const copyError = ref('')
 
 const copyToClipboard = async (text: string, fieldKey: string) => {
+  copyError.value = ''
   try {
     await navigator.clipboard.writeText(text)
     copiedField.value = fieldKey
@@ -62,7 +66,7 @@ const copyToClipboard = async (text: string, fieldKey: string) => {
       }
     }, 2000)
   } catch (err) {
-    console.error('Failed to copy to clipboard', err)
+    copyError.value = 'Could not copy. Please select the text and copy it manually.'
   }
 }
 
@@ -105,8 +109,8 @@ const regenerateCoverLetter = async () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        role_archetype: selectedArchetype.value === 'auto' ? null : selectedArchetype.value,
-        candidate_directives: candidateDirectives.value.trim() || null
+        archetype: selectedArchetype.value,
+        custom_instructions: candidateDirectives.value.trim() || null
       })
     })
 
@@ -116,8 +120,7 @@ const regenerateCoverLetter = async () => {
     }
 
     const data = await res.json()
-    props.assets.cover_letter_markdown = data.cover_letter_markdown
-    editableLetterMarkdown.value = data.cover_letter_markdown
+    editableLetterMarkdown.value = data.assets.cover_letter_markdown
     letterSavedSuccess.value = true
     setTimeout(() => { letterSavedSuccess.value = false }, 3000)
     emit('updated')
@@ -149,7 +152,6 @@ const saveEditedCoverLetter = async () => {
     }
 
     const data = await res.json()
-    props.assets.cover_letter_markdown = data.cover_letter_markdown
     isEditingLetter.value = false
     letterSavedSuccess.value = true
     setTimeout(() => { letterSavedSuccess.value = false }, 3000)
@@ -209,8 +211,7 @@ const regenerateResume = async () => {
     }
 
     const data = await res.json()
-    props.assets.resume_markdown = data.resume_markdown
-    editableResumeMarkdown.value = data.resume_markdown
+    editableResumeMarkdown.value = data.assets.resume_markdown
     resumeSavedSuccess.value = true
     setTimeout(() => { resumeSavedSuccess.value = false }, 3000)
     emit('updated')
@@ -242,7 +243,6 @@ const saveEditedResume = async () => {
     }
 
     const data = await res.json()
-    props.assets.resume_markdown = data.resume_markdown
     isEditingResume.value = false
     resumeSavedSuccess.value = true
     setTimeout(() => { resumeSavedSuccess.value = false }, 3000)
@@ -346,777 +346,49 @@ const generateOutreach = async () => {
     isGeneratingOutreach.value = false
   }
 }
+const documentTab = computed(() => activeTab.value === 'cover_letter' || activeTab.value === 'resume')
+const resumeTab = computed(() => activeTab.value === 'resume')
+const editing = computed(() => resumeTab.value ? isEditingResume.value : isEditingLetter.value)
+const saving = computed(() => resumeTab.value ? isSavingResume.value : isSavingLetter.value)
+const regenerating = computed(() => resumeTab.value ? isRegeneratingResume.value : isRegeneratingLetter.value)
+const documentError = computed(() => resumeTab.value ? resumeError.value : letterError.value)
+const documentSaved = computed(() => resumeTab.value ? resumeSavedSuccess.value : letterSavedSuccess.value)
+const documentText = computed(() => resumeTab.value ? props.assets.resume_markdown || '' : props.assets.cover_letter_markdown || '')
+const documentTitle = computed(() => resumeTab.value ? 'Resume' : 'Cover letter')
+const unsaved = computed(() => (isEditingLetter.value && editableLetterMarkdown.value !== props.assets.cover_letter_markdown) || (isEditingResume.value && editableResumeMarkdown.value !== (props.assets.resume_markdown || '')))
+onBeforeRouteLeave(() => !unsaved.value || window.confirm('Leave this application and discard your unsaved edits?'))
+const answers = computed(() => [
+  { label: 'Why this company?', variants: [{text: props.assets.ans_why_company_250, max:250}, {text: props.assets.ans_why_company_500,max:500}] },
+  { label: 'A technical challenge', variants: [{text: props.assets.ans_technical_challenge_250,max:250},{text:props.assets.ans_technical_challenge_500,max:500}] },
+  { label: 'Python and Go experience',variants:[{text:props.assets.ans_python_go_proficiency_220,max:220}] },
+  { label: 'Location and relocation',variants:[{text:props.assets.ans_location_relocation_220,max:220}] },
+  ...Object.entries(props.assets.custom_qa || {}).map(([label,text])=>({label,variants:[{text,max:0}]}))
+])
+const answerVersions = ref<Record<number,number>>({})
+const answerVariant = (index: number) => answers.value[index].variants[answerVersions.value[index] || 0]
+const materialTabs = [{value:'cover_letter',label:'Cover letter'},{value:'resume',label:'Resume'},{value:'answers',label:'Answers'},{value:'contacts',label:'Outreach'},{value:'adhoc',label:'Ask a question'}] as const
+const refreshDocument = () => resumeTab.value ? regenerateResume() : regenerateCoverLetter()
+const saveDocument = () => resumeTab.value ? saveEditedResume() : saveEditedCoverLetter()
+const editDocument = () => { if(resumeTab.value) { editableResumeMarkdown.value=props.assets.resume_markdown || '';isEditingResume.value=true } else { editableLetterMarkdown.value=props.assets.cover_letter_markdown || '';isEditingLetter.value=true } }
+const cancelDocument = () => resumeTab.value ? cancelEditResume() : cancelEditLetter()
+defineExpose({ unsaved })
 </script>
 
 <template>
-  <div class="glass-panel rounded-xl overflow-hidden border border-white/10 flex flex-col h-full">
-    <!-- Header Tabs -->
-    <div class="px-4 py-3 bg-dark-900/80 border-b border-white/10 flex items-center justify-between overflow-x-auto">
-      <div class="flex items-center gap-1.5 p-1 rounded-lg bg-dark-850 border border-white/5">
-        <button
-          @click="activeTab = 'answers'"
-          class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap transition-all"
-          :class="activeTab === 'answers' ? 'bg-brand-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'"
-        >
-          <HelpCircle class="w-3.5 h-3.5" />
-          <span>Screening Q&A</span>
-        </button>
-
-        <button
-          @click="activeTab = 'cover_letter'"
-          class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap transition-all"
-          :class="activeTab === 'cover_letter' ? 'bg-brand-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'"
-        >
-          <FileText class="w-3.5 h-3.5" />
-          <span>Cover Letter</span>
-        </button>
-
-        <button
-          @click="activeTab = 'resume'"
-          class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap transition-all"
-          :class="activeTab === 'resume' ? 'bg-brand-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'"
-        >
-          <Briefcase class="w-3.5 h-3.5" />
-          <span>Resume</span>
-        </button>
-
-        <!-- Hiring Contacts Tab with badge -->
-        <button
-          @click="activeTab = 'contacts'"
-          class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap transition-all"
-          :class="activeTab === 'contacts' ? 'bg-brand-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'"
-        >
-          <Mail class="w-3.5 h-3.5" />
-          <span>Hiring Contacts</span>
-          <span
-            v-if="hiringContacts?.is_direct_listing_email"
-            class="px-1.5 py-0.2 rounded-full text-[9px] font-mono font-bold bg-emerald-400 text-dark-950"
-          >
-            Direct
-          </span>
-          <span
-            v-else-if="hiringContacts?.primary_email"
-            class="px-1.5 py-0.2 rounded-full text-[9px] font-mono font-bold bg-white/20 text-white"
-          >
-            1+
-          </span>
-        </button>
-
-        <button
-          @click="activeTab = 'adhoc'"
-          class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap transition-all"
-          :class="activeTab === 'adhoc' ? 'bg-brand-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'"
-        >
-          <Sparkles class="w-3.5 h-3.5 text-amber-400" />
-          <span>Ad-Hoc Copilot</span>
-        </button>
+  <section class="editor" aria-label="Application materials">
+    <nav class="tabs doc-tabs" aria-label="Application materials"><button v-for="tab in materialTabs" :key="tab.value" :class="{active:activeTab===tab.value}" :aria-pressed="activeTab===tab.value" @click="activeTab=tab.value">{{ tab.label }}<span v-if="(tab.value==='cover_letter' && isEditingLetter) || (tab.value==='resume' && isEditingResume)" class="unsaved-dot" aria-label="Editing" /></button></nav>
+    <div v-if="copyError" role="alert" class="feedback-error">{{ copyError }}</div>
+    <template v-if="documentTab">
+      <div class="doc-tools"><span>{{ editing ? 'Editing draft · Changes are not saved' : documentSaved ? 'Draft saved' : 'Tailored draft · Review before sending' }}</span><div class="actions"><template v-if="editing"><button :disabled="saving" @click="cancelDocument">Cancel</button><button class="primary" :disabled="saving" @click="saveDocument"><Save aria-hidden="true" />{{ saving ? 'Saving…' : 'Save draft' }}</button></template><template v-else><button :disabled="regenerating" @click="editDocument"><Edit3 aria-hidden="true" />Edit</button><button @click="copyToClipboard(documentText,'document')"><component :is="copiedField==='document' ? Check : Copy" aria-hidden="true" />{{ copiedField==='document' ? 'Copied' : 'Copy' }}</button><button :disabled="!documentText" :aria-label="`Download ${documentTitle} PDF`" @click="resumeTab ? downloadResumePdf() : downloadPdf()"><Download aria-hidden="true" /></button></template></div></div>
+      <div v-if="documentError" role="alert" class="feedback-error">{{ documentError }}</div>
+      <div class="paper-wrap" role="region" tabindex="0" :aria-label="`${documentTitle} document`"><details class="customize-panel"><summary>Customize {{ documentTitle.toLowerCase() }}</summary><div class="customize-fields"><label v-if="!resumeTab">Role focus<select v-model="selectedArchetype"><option v-for="role in roleArchetypes" :key="role.value" :value="role.value">{{ role.label }}</option></select></label><label>Instructions (optional)<textarea v-if="resumeTab" v-model="resumeDirectives" placeholder="What should the resume emphasize?" /><textarea v-else v-model="candidateDirectives" placeholder="What should the letter emphasize?" /></label><button class="secondary" :disabled="regenerating || saving || editing" @click="refreshDocument"><RefreshCw :class="{'animate-spin':regenerating}" aria-hidden="true" />{{ regenerating ? 'Generating draft…' : 'Generate a new draft' }}</button><small>Uses the candidate profile version saved with this application and the original job description.</small></div></details>
+        <article class="paper" :class="{ 'resume-paper': resumeTab }"><template v-if="editing"><label class="sr-only" :for="`draft-${jobId}`">Edit {{ documentTitle.toLowerCase() }}</label><textarea v-if="resumeTab" :id="`draft-${jobId}`" v-model="editableResumeMarkdown" class="paper-editor" /><textarea v-else :id="`draft-${jobId}`" v-model="editableLetterMarkdown" class="paper-editor" /></template><template v-else><div v-if="!resumeTab" class="paper-heading"><h2>{{ assets.candidate_snapshot?.data?.name || 'Candidate' }}</h2><p>Application for {{ jobTitle || 'the role' }}<br>{{ companyName }}</p></div><MarkdownText v-if="documentText" :text="documentText" /><p v-else class="document-copy">No {{ documentTitle.toLowerCase() }} has been generated yet. Use Customize to prepare one.</p></template></article>
       </div>
-
-      <span class="text-[11px] text-slate-400 font-mono hidden md:inline ml-2">1-Click Fast Copy</span>
+    </template>
+    <div v-else class="material-scroll" tabindex="0">
+      <div v-if="activeTab==='answers'" class="answers-panel"><section v-for="(answer,index) in answers" :key="answer.label" class="answer"><div class="answer-head"><h3>{{ answer.label }}</h3><button @click="copyToClipboard(answerVariant(index).text,`answer-${index}`)"><component :is="copiedField===`answer-${index}` ? Check : Copy" aria-hidden="true" />{{ copiedField===`answer-${index}` ? 'Copied' : 'Copy' }}</button></div><div v-if="answer.variants.length>1" class="answer-lengths"><button v-for="(variant,i) in answer.variants" :key="i" :aria-pressed="(answerVersions[index] || 0)===i" @click="answerVersions[index]=i">{{ variant.max }} characters</button></div><p>{{ answerVariant(index).text || 'No answer has been generated.' }}</p><small :class="{'text-red-300':answerVariant(index).max && answerVariant(index).text?.length>answerVariant(index).max}">{{ answerVariant(index).text?.length || 0 }}{{ answerVariant(index).max ? ` / ${answerVariant(index).max}` : '' }} characters</small></section></div>
+      <div v-else-if="activeTab==='contacts'" class="outreach-panel"><h2>Start a conversation</h2><p class="muted">Review the contact source before reaching out.</p><section v-if="hiringContacts?.primary_email" class="contact-block"><span class="tag" :class="{green:hiringContacts.is_direct_listing_email}">{{ hiringContacts.is_direct_listing_email ? 'Email found in listing' : 'Suggested inbox · Unverified' }}</span><strong>{{ hiringContacts.primary_email }}</strong><div class="actions"><button class="secondary" @click="copyToClipboard(hiringContacts.primary_email || '', 'email')"><Copy aria-hidden="true" />{{ copiedField==='email' ? 'Copied' : 'Copy email' }}</button><a :href="`mailto:${hiringContacts.primary_email}`" class="secondary button-link">Compose email</a></div><details v-if="hiringContacts.direct_emails?.length || hiringContacts.derived_inboxes?.length"><summary>Other discovered contacts</summary><p v-for="email in hiringContacts.direct_emails" :key="email">{{ email }} <small>Found in listing</small></p><p v-for="email in hiringContacts.derived_inboxes" :key="email">{{ email }} <small>Suggested · Unverified</small></p></details></section><p v-else class="contact-block muted">No hiring email is available. Use the original listing to find a contact.</p><a v-if="isCommunityOrFounder && /^https?:\/\//i.test(sourceUrl || '')" :href="sourceUrl" target="_blank" rel="noopener noreferrer" class="text-link inline-link">Open original community post<ExternalLink aria-hidden="true" /></a><section class="customize-fields"><h3>Draft an introduction</h3><label>Recipient<select v-model="outreachPersona"><option value="technical_lead">Technical lead</option><option value="recruiter">Recruiter</option><option value="founder">Founder</option></select></label><label>Purpose<select v-model="outreachType"><option value="post_application">Follow up after applying</option><option value="direct_pitch">Introduce yourself</option></select></label><button class="secondary" :disabled="isGeneratingOutreach" @click="generateOutreach">{{ isGeneratingOutreach ? 'Writing…' : 'Generate outreach draft' }}</button><p v-if="outreachError" role="alert" class="feedback-error">{{ outreachError }}</p><div v-if="followUpPitchMessage"><label v-for="(subject,index) in outreachSubjects" :key="index" class="outreach-subject">Subject {{ index+1 }}<span>{{ subject }}</span><button @click="copyToClipboard(subject,`subject-${index}`)"><Copy />{{ copiedField===`subject-${index}` ? 'Copied' : 'Copy' }}</button></label><label>Message<textarea v-model="followUpPitchMessage" rows="10" /></label><button class="secondary" @click="copyToClipboard(followUpPitchMessage,'outreach')"><Copy />{{ copiedField==='outreach' ? 'Copied' : 'Copy message' }}</button></div></section></div>
+      <div v-else class="outreach-panel"><h2>Answer a screening question</h2><p class="muted">Create a draft grounded in your saved profile and this role.</p><div class="customize-fields"><label>Question<textarea v-model="customQuestion" rows="4" placeholder="Paste the question from the application" /></label><label>Character limit<input v-model.number="customMaxChars" type="number" min="50" max="2000"></label><button class="primary" :disabled="isGenerating || customQuestion.trim().length<3 || customMaxChars<50 || customMaxChars>2000" @click="generateAdHocAnswer">{{ isGenerating ? 'Writing answer…' : 'Generate answer' }}</button><p v-if="adHocError" role="alert" class="feedback-error">{{ adHocError }}</p><section v-if="adHocAnswer" class="answer"><div class="answer-head"><h3>Suggested answer</h3><button @click="copyToClipboard(adHocAnswer,'adhoc')"><Copy />{{ copiedField==='adhoc' ? 'Copied' : 'Copy' }}</button></div><p>{{ adHocAnswer }}</p><small>{{ adHocAnswer.length }} / {{ customMaxChars }} characters · Review before sending</small></section></div></div>
     </div>
-
-    <!-- Content Body -->
-    <div class="p-4 lg:p-6 overflow-y-auto space-y-6 flex-1">
-      
-      <!-- TAB 1: Screening Answers -->
-      <div v-if="activeTab === 'answers'" class="space-y-4">
-        
-        <!-- Answer 1: Why Company (250 chars) -->
-        <div class="glass-card rounded-lg p-3.5 border border-white/5 hover:border-white/15 transition-all">
-          <div class="flex items-center justify-between mb-2">
-            <span class="text-xs font-bold text-slate-200">Why this company? (Short &bull; 250 max)</span>
-            <div class="flex items-center gap-2">
-              <span
-                class="text-[11px] font-mono px-2 py-0.5 rounded font-semibold"
-                :class="assets.ans_why_company_250?.length <= 250 ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/15 text-red-400'"
-              >
-                {{ assets.ans_why_company_250?.length || 0 }} / 250 chars
-              </span>
-              <button
-                @click="copyToClipboard(assets.ans_why_company_250, 'why_250')"
-                class="flex items-center gap-1 px-2.5 py-1 rounded bg-white/10 hover:bg-white/15 text-xs text-white transition-all active:scale-95"
-              >
-                <Check v-if="copiedField === 'why_250'" class="w-3.5 h-3.5 text-emerald-400" />
-                <Copy v-else class="w-3.5 h-3.5 text-slate-300" />
-                <span>{{ copiedField === 'why_250' ? 'Copied!' : 'Copy' }}</span>
-              </button>
-            </div>
-          </div>
-          <p class="text-xs text-slate-300 font-mono leading-relaxed bg-dark-950/60 p-2.5 rounded border border-white/5 select-all">
-            {{ assets.ans_why_company_250 }}
-          </p>
-        </div>
-
-        <!-- Answer 2: Why Company (500 chars) -->
-        <div class="glass-card rounded-lg p-3.5 border border-white/5 hover:border-white/15 transition-all">
-          <div class="flex items-center justify-between mb-2">
-            <span class="text-xs font-bold text-slate-200">Why this company? (Extended &bull; 500 max)</span>
-            <div class="flex items-center gap-2">
-              <span
-                class="text-[11px] font-mono px-2 py-0.5 rounded font-semibold"
-                :class="assets.ans_why_company_500?.length <= 500 ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/15 text-red-400'"
-              >
-                {{ assets.ans_why_company_500?.length || 0 }} / 500 chars
-              </span>
-              <button
-                @click="copyToClipboard(assets.ans_why_company_500, 'why_500')"
-                class="flex items-center gap-1 px-2.5 py-1 rounded bg-white/10 hover:bg-white/15 text-xs text-white transition-all active:scale-95"
-              >
-                <Check v-if="copiedField === 'why_500'" class="w-3.5 h-3.5 text-emerald-400" />
-                <Copy v-else class="w-3.5 h-3.5 text-slate-300" />
-                <span>{{ copiedField === 'why_500' ? 'Copied!' : 'Copy' }}</span>
-              </button>
-            </div>
-          </div>
-          <p class="text-xs text-slate-300 font-mono leading-relaxed bg-dark-950/60 p-2.5 rounded border border-white/5 select-all">
-            {{ assets.ans_why_company_500 }}
-          </p>
-        </div>
-
-        <!-- Answer 3: Technical Challenge (250 chars) -->
-        <div class="glass-card rounded-lg p-3.5 border border-white/5 hover:border-white/15 transition-all">
-          <div class="flex items-center justify-between mb-2">
-            <span class="text-xs font-bold text-slate-200">Most complex technical challenge (250 max)</span>
-            <div class="flex items-center gap-2">
-              <span
-                class="text-[11px] font-mono px-2 py-0.5 rounded font-semibold"
-                :class="assets.ans_technical_challenge_250?.length <= 250 ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/15 text-red-400'"
-              >
-                {{ assets.ans_technical_challenge_250?.length || 0 }} / 250 chars
-              </span>
-              <button
-                @click="copyToClipboard(assets.ans_technical_challenge_250, 'tech_250')"
-                class="flex items-center gap-1 px-2.5 py-1 rounded bg-white/10 hover:bg-white/15 text-xs text-white transition-all active:scale-95"
-              >
-                <Check v-if="copiedField === 'tech_250'" class="w-3.5 h-3.5 text-emerald-400" />
-                <Copy v-else class="w-3.5 h-3.5 text-slate-300" />
-                <span>{{ copiedField === 'tech_250' ? 'Copied!' : 'Copy' }}</span>
-              </button>
-            </div>
-          </div>
-          <p class="text-xs text-slate-300 font-mono leading-relaxed bg-dark-950/60 p-2.5 rounded border border-white/5 select-all">
-            {{ assets.ans_technical_challenge_250 }}
-          </p>
-        </div>
-
-        <!-- Answer 4: Technical Challenge (500 chars) -->
-        <div class="glass-card rounded-lg p-3.5 border border-white/5 hover:border-white/15 transition-all">
-          <div class="flex items-center justify-between mb-2">
-            <span class="text-xs font-bold text-slate-200">Most complex technical challenge (Extended &bull; 500 max)</span>
-            <div class="flex items-center gap-2">
-              <span
-                class="text-[11px] font-mono px-2 py-0.5 rounded font-semibold"
-                :class="assets.ans_technical_challenge_500?.length <= 500 ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/15 text-red-400'"
-              >
-                {{ assets.ans_technical_challenge_500?.length || 0 }} / 500 chars
-              </span>
-              <button
-                @click="copyToClipboard(assets.ans_technical_challenge_500, 'tech_500')"
-                class="flex items-center gap-1 px-2.5 py-1 rounded bg-white/10 hover:bg-white/15 text-xs text-white transition-all active:scale-95"
-              >
-                <Check v-if="copiedField === 'tech_500'" class="w-3.5 h-3.5 text-emerald-400" />
-                <Copy v-else class="w-3.5 h-3.5 text-slate-300" />
-                <span>{{ copiedField === 'tech_500' ? 'Copied!' : 'Copy' }}</span>
-              </button>
-            </div>
-          </div>
-          <p class="text-xs text-slate-300 font-mono leading-relaxed bg-dark-950/60 p-2.5 rounded border border-white/5 select-all">
-            {{ assets.ans_technical_challenge_500 }}
-          </p>
-        </div>
-
-        <!-- Answer 5: Python & Golang Proficiency (220 chars) -->
-        <div class="glass-card rounded-lg p-3.5 border border-white/5 hover:border-white/15 transition-all">
-          <div class="flex items-center justify-between mb-2">
-            <span class="text-xs font-bold text-slate-200">Python & Golang Proficiency Statement (220 max)</span>
-            <div class="flex items-center gap-2">
-              <span
-                class="text-[11px] font-mono px-2 py-0.5 rounded font-semibold"
-                :class="assets.ans_python_go_proficiency_220?.length <= 220 ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/15 text-red-400'"
-              >
-                {{ assets.ans_python_go_proficiency_220?.length || 0 }} / 220 chars
-              </span>
-              <button
-                @click="copyToClipboard(assets.ans_python_go_proficiency_220, 'py_go_220')"
-                class="flex items-center gap-1 px-2.5 py-1 rounded bg-white/10 hover:bg-white/15 text-xs text-white transition-all active:scale-95"
-              >
-                <Check v-if="copiedField === 'py_go_220'" class="w-3.5 h-3.5 text-emerald-400" />
-                <Copy v-else class="w-3.5 h-3.5 text-slate-300" />
-                <span>{{ copiedField === 'py_go_220' ? 'Copied!' : 'Copy' }}</span>
-              </button>
-            </div>
-          </div>
-          <p class="text-xs text-slate-300 font-mono leading-relaxed bg-dark-950/60 p-2.5 rounded border border-white/5 select-all">
-            {{ assets.ans_python_go_proficiency_220 }}
-          </p>
-        </div>
-
-        <!-- Answer 6: Location & Relocation Readiness (220 chars) -->
-        <div class="glass-card rounded-lg p-3.5 border border-white/5 hover:border-white/15 transition-all">
-          <div class="flex items-center justify-between mb-2">
-            <span class="text-xs font-bold text-slate-200">Location & Relocation Statement (220 max)</span>
-            <div class="flex items-center gap-2">
-              <span
-                class="text-[11px] font-mono px-2 py-0.5 rounded font-semibold"
-                :class="assets.ans_location_relocation_220?.length <= 220 ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/15 text-red-400'"
-              >
-                {{ assets.ans_location_relocation_220?.length || 0 }} / 220 chars
-              </span>
-              <button
-                @click="copyToClipboard(assets.ans_location_relocation_220, 'loc_220')"
-                class="flex items-center gap-1 px-2.5 py-1 rounded bg-white/10 hover:bg-white/15 text-xs text-white transition-all active:scale-95"
-              >
-                <Check v-if="copiedField === 'loc_220'" class="w-3.5 h-3.5 text-emerald-400" />
-                <Copy v-else class="w-3.5 h-3.5 text-slate-300" />
-                <span>{{ copiedField === 'loc_220' ? 'Copied!' : 'Copy' }}</span>
-              </button>
-            </div>
-          </div>
-          <p class="text-xs text-slate-300 font-mono leading-relaxed bg-dark-950/60 p-2.5 rounded border border-white/5 select-all">
-            {{ assets.ans_location_relocation_220 }}
-          </p>
-        </div>
-
-      </div>
-
-      <!-- TAB 2: Cover Letter Customization, Live Editor & PDF Generator -->
-      <div v-else-if="activeTab === 'cover_letter'" class="space-y-4">
-        
-        <!-- Role Archetype Customization Bar -->
-        <div class="glass-card rounded-xl p-4 border border-white/10 space-y-3 bg-dark-900/70">
-          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div class="flex items-center gap-2">
-              <Briefcase class="w-4 h-4 text-brand-400" />
-              <span class="text-xs font-bold text-white">Role Archetype Customization</span>
-            </div>
-            <span class="text-[11px] text-slate-400">Tailors projects & emphasis specifically to target role</span>
-          </div>
-
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-            <!-- Archetype Selector -->
-            <div>
-              <label class="block text-[11px] font-semibold text-slate-300 mb-1">Target Role Archetype:</label>
-              <select
-                v-model="selectedArchetype"
-                class="w-full bg-dark-950 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500 cursor-pointer"
-              >
-                <option v-for="arc in roleArchetypes" :key="arc.value" :value="arc.value" class="bg-dark-950 text-white">
-                  {{ arc.label }}
-                </option>
-              </select>
-            </div>
-
-            <!-- Custom Directives -->
-            <div>
-              <label class="block text-[11px] font-semibold text-slate-300 mb-1">Candidate Directives / Extra Focus (Optional):</label>
-              <input
-                v-model="candidateDirectives"
-                type="text"
-                placeholder="e.g. Focus on Golang concurrency, ALN Riders $1M+ volume..."
-                class="w-full bg-dark-950 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
-              />
-            </div>
-          </div>
-
-          <!-- Action Buttons for Regeneration & PDF -->
-          <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/5">
-            <button
-              @click="regenerateCoverLetter"
-              :disabled="isRegeneratingLetter"
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-glow-indigo transition-all disabled:opacity-50"
-            >
-              <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': isRegeneratingLetter }" />
-              <span>{{ isRegeneratingLetter ? 'Regenerating & Recompiling PDF...' : 'Regenerate Cover Letter' }}</span>
-            </button>
-
-            <div class="flex items-center gap-2">
-              <button
-                v-if="!isEditingLetter"
-                @click="isEditingLetter = true"
-                class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-dark-850 hover:bg-dark-800 text-slate-300 hover:text-white border border-white/10 text-xs font-semibold transition-colors"
-              >
-                <Edit3 class="w-3.5 h-3.5" />
-                <span>Edit Text</span>
-              </button>
-
-              <button
-                @click="downloadPdf"
-                class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600/80 hover:bg-emerald-600 text-white text-xs font-semibold transition-colors shadow-glow-green"
-              >
-                <Download class="w-3.5 h-3.5" />
-                <span>View Single-Page PDF</span>
-              </button>
-            </div>
-          </div>
-
-          <!-- Success / Error Alerts -->
-          <div v-if="letterSavedSuccess" class="p-2 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs flex items-center gap-2">
-            <CheckCircle2 class="w-3.5 h-3.5" />
-            <span>Cover letter & PDF recompiled successfully!</span>
-          </div>
-
-          <div v-if="letterError" class="p-2 rounded bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
-            <AlertCircle class="w-3.5 h-3.5" />
-            <span>{{ letterError }}</span>
-          </div>
-        </div>
-
-        <!-- Cover Letter Content (Read or Edit Mode) -->
-        <div class="space-y-2">
-          <div class="flex items-center justify-between">
-            <span class="text-xs font-bold text-slate-200">
-              {{ isEditingLetter ? 'Direct Markdown Editor' : 'Current Tailored Cover Letter' }}
-            </span>
-
-            <div class="flex items-center gap-2">
-              <template v-if="isEditingLetter">
-                <button
-                  @click="cancelEditLetter"
-                  class="px-2.5 py-1 rounded bg-dark-850 hover:bg-dark-800 text-xs text-slate-400 hover:text-white transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  @click="saveEditedCoverLetter"
-                  :disabled="isSavingLetter"
-                  class="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs text-white font-semibold transition-all disabled:opacity-50 shadow-glow-green"
-                >
-                  <Save class="w-3.5 h-3.5" :class="{ 'animate-spin': isSavingLetter }" />
-                  <span>{{ isSavingLetter ? 'Compiling PDF...' : 'Save & Recompile PDF' }}</span>
-                </button>
-              </template>
-
-              <template v-else>
-                <button
-                  @click="copyToClipboard(assets.cover_letter_markdown, 'cover_letter')"
-                  class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-xs text-white font-semibold shadow-glow-blue transition-all active:scale-95"
-                >
-                  <Check v-if="copiedField === 'cover_letter'" class="w-3.5 h-3.5 text-white" />
-                  <Copy v-else class="w-3.5 h-3.5 text-white" />
-                  <span>{{ copiedField === 'cover_letter' ? 'Copied!' : 'Copy Full Text' }}</span>
-                </button>
-              </template>
-            </div>
-          </div>
-
-          <!-- Edit Textarea -->
-          <div v-if="isEditingLetter">
-            <textarea
-              v-model="editableLetterMarkdown"
-              rows="16"
-              class="w-full p-4 rounded-lg bg-dark-950/90 border border-brand-500/40 text-xs text-slate-200 font-mono leading-relaxed focus:outline-none focus:border-brand-400"
-              placeholder="Enter markdown cover letter..."
-            ></textarea>
-            <p class="text-[11px] text-slate-500 mt-1">
-              Saving updates both the markdown content and regenerates the high-resolution single-page ReportLab PDF.
-            </p>
-          </div>
-
-          <!-- Read-only Display -->
-          <div
-            v-else
-            class="p-4 rounded-lg bg-dark-950/80 border border-white/5 text-xs text-slate-200 font-mono leading-relaxed whitespace-pre-wrap select-all max-h-[500px] overflow-y-auto"
-          >
-            {{ assets.cover_letter_markdown }}
-          </div>
-        </div>
-
-      </div>
-
-      <!-- TAB: Resume Customization, Live Editor & PDF Generator -->
-      <div v-else-if="activeTab === 'resume'" class="space-y-4">
-        
-        <!-- Resume Action Bar -->
-        <div class="glass-card rounded-xl p-4 border border-white/10 space-y-3 bg-dark-900/70">
-          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div class="flex items-center gap-2">
-              <Briefcase class="w-4 h-4 text-brand-400" />
-              <span class="text-xs font-bold text-white">ATS-Optimized Resume Tailoring</span>
-            </div>
-            <span class="text-[11px] text-slate-400">Tailors base resume with exact-match keywords</span>
-          </div>
-
-          <div class="grid grid-cols-1 pt-1">
-            <!-- Custom Directives -->
-            <div>
-              <label class="block text-[11px] font-semibold text-slate-300 mb-1">Resume Directives / Extra Focus (Optional):</label>
-              <input
-                v-model="resumeDirectives"
-                type="text"
-                placeholder="e.g. Expand on Nuxt performance optimizations, omit fullstack references..."
-                class="w-full bg-dark-950 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
-              />
-            </div>
-          </div>
-
-          <!-- Action Buttons for Regeneration & PDF -->
-          <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/5">
-            <button
-              @click="regenerateResume"
-              :disabled="isRegeneratingResume"
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-glow-indigo transition-all disabled:opacity-50"
-            >
-              <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': isRegeneratingResume }" />
-              <span>{{ isRegeneratingResume ? 'Regenerating & Recompiling PDF...' : 'Regenerate Resume' }}</span>
-            </button>
-
-            <div class="flex items-center gap-2">
-              <button
-                v-if="!isEditingResume"
-                @click="isEditingResume = true"
-                class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-dark-850 hover:bg-dark-800 text-slate-300 hover:text-white border border-white/10 text-xs font-semibold transition-colors"
-              >
-                <Edit3 class="w-3.5 h-3.5" />
-                <span>Edit Text</span>
-              </button>
-
-              <button
-                @click="downloadResumePdf"
-                class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600/80 hover:bg-emerald-600 text-white text-xs font-semibold transition-colors shadow-glow-green"
-              >
-                <Download class="w-3.5 h-3.5" />
-                <span>View Single-Page PDF</span>
-              </button>
-            </div>
-          </div>
-
-          <!-- Success / Error Alerts -->
-          <div v-if="resumeSavedSuccess" class="p-2 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs flex items-center gap-2">
-            <CheckCircle2 class="w-3.5 h-3.5" />
-            <span>Resume & PDF recompiled successfully!</span>
-          </div>
-
-          <div v-if="resumeError" class="p-2 rounded bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
-            <AlertCircle class="w-3.5 h-3.5" />
-            <span>{{ resumeError }}</span>
-          </div>
-        </div>
-
-        <!-- Resume Content (Read or Edit Mode) -->
-        <div class="space-y-2">
-          <div class="flex items-center justify-between">
-            <span class="text-xs font-bold text-slate-200">
-              {{ isEditingResume ? 'Direct Markdown Editor' : 'Current Tailored Resume' }}
-            </span>
-
-            <div class="flex items-center gap-2">
-              <template v-if="isEditingResume">
-                <button
-                  @click="cancelEditResume"
-                  class="px-2.5 py-1 rounded bg-dark-850 hover:bg-dark-800 text-xs text-slate-400 hover:text-white transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  @click="saveEditedResume"
-                  :disabled="isSavingResume"
-                  class="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs text-white font-semibold transition-all disabled:opacity-50 shadow-glow-green"
-                >
-                  <Save class="w-3.5 h-3.5" :class="{ 'animate-spin': isSavingResume }" />
-                  <span>{{ isSavingResume ? 'Compiling PDF...' : 'Save & Recompile PDF' }}</span>
-                </button>
-              </template>
-
-              <template v-else>
-                <button
-                  @click="copyToClipboard(assets.resume_markdown, 'resume_markdown')"
-                  class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-xs text-white font-semibold shadow-glow-blue transition-all active:scale-95"
-                >
-                  <Check v-if="copiedField === 'resume_markdown'" class="w-3.5 h-3.5 text-white" />
-                  <Copy v-else class="w-3.5 h-3.5 text-white" />
-                  <span>{{ copiedField === 'resume_markdown' ? 'Copied!' : 'Copy Full Text' }}</span>
-                </button>
-              </template>
-            </div>
-          </div>
-
-          <!-- Edit Textarea -->
-          <div v-if="isEditingResume">
-            <textarea
-              v-model="editableResumeMarkdown"
-              rows="22"
-              class="w-full p-4 rounded-lg bg-dark-950/90 border border-brand-500/40 text-xs text-slate-200 font-mono leading-relaxed focus:outline-none focus:border-brand-400"
-              placeholder="Enter markdown resume..."
-            ></textarea>
-            <p class="text-[11px] text-slate-500 mt-1">
-              Saving updates both the markdown content and regenerates the high-resolution single-page ReportLab PDF.
-            </p>
-          </div>
-
-          <!-- Read-only Display -->
-          <div
-            v-else
-            class="p-4 rounded-lg bg-dark-950/80 border border-white/5 text-xs text-slate-200 font-mono leading-relaxed whitespace-pre-wrap select-all max-h-[600px] overflow-y-auto"
-          >
-            {{ assets.resume_markdown }}
-          </div>
-        </div>
-
-      </div>
-
-      <!-- TAB 3: Hiring Contacts & Follow-Up Inboxes -->
-      <div v-else-if="activeTab === 'contacts'" class="space-y-4">
-        
-        <!-- Community / Founder Direct Channel Card -->
-        <div v-if="isCommunityOrFounder" class="p-4 rounded-xl bg-gradient-to-r from-amber-500/15 via-orange-500/10 to-dark-900 border border-amber-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-glow-amber">
-          <div class="flex items-center gap-3">
-            <div class="p-2 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/30">
-              <Rocket class="w-5 h-5" />
-            </div>
-            <div>
-              <div class="flex items-center gap-2">
-                <span class="text-xs font-bold text-amber-300">Founder Direct Opportunity</span>
-                <span class="px-1.5 py-0.2 rounded text-[10px] bg-amber-400/20 text-amber-200 border border-amber-400/30 font-mono font-semibold uppercase">
-                  {{ getDirectCommunityPlatform() }}
-                </span>
-              </div>
-              <div class="text-[11px] text-slate-300 mt-0.5">
-                Direct founder or engineering lead hiring post. Direct outreach bypasses ATS filtering entirely.
-              </div>
-            </div>
-          </div>
-
-          <a
-            v-if="sourceUrl"
-            :href="sourceUrl"
-            target="_blank"
-            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white text-xs font-semibold whitespace-nowrap transition-all shadow-sm"
-          >
-            <span>Open Direct {{ getDirectCommunityPlatform() }} Post</span>
-            <ExternalLink class="w-3.5 h-3.5" />
-          </a>
-        </div>
-
-        <!-- Discovered Emails Card -->
-        <div class="glass-card rounded-xl p-4 border border-white/10 space-y-4">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <Mail class="w-4 h-4 text-emerald-400" />
-              <span class="text-xs font-bold text-white">Discovered Hiring & Recruiting Contacts</span>
-            </div>
-            <span
-              v-if="hiringContacts?.is_direct_listing_email"
-              class="px-2 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono font-semibold"
-            >
-              Direct Email in Listing
-            </span>
-            <span
-              v-else
-              class="px-2 py-0.5 rounded text-[10px] bg-dark-850 text-slate-400 border border-white/10 font-mono"
-            >
-              Derived Talent Inboxes
-            </span>
-          </div>
-
-          <!-- Primary Email Highlight -->
-          <div v-if="hiringContacts?.primary_email" class="p-3.5 rounded-lg bg-dark-950 border border-white/10 space-y-2">
-            <div class="flex items-center justify-between text-xs">
-              <span class="text-slate-400">Primary Contact:</span>
-              <div class="flex items-center gap-2">
-                <button
-                  @click="copyToClipboard(hiringContacts.primary_email, 'primary_email')"
-                  class="flex items-center gap-1 px-2.5 py-1 rounded bg-white/10 hover:bg-white/15 text-xs text-white"
-                >
-                  <Check v-if="copiedField === 'primary_email'" class="w-3.5 h-3.5 text-emerald-400" />
-                  <Copy v-else class="w-3.5 h-3.5 text-slate-300" />
-                  <span>{{ copiedField === 'primary_email' ? 'Copied' : 'Copy Email' }}</span>
-                </button>
-
-                <a
-                  :href="hiringContacts.mailto_url || `mailto:${hiringContacts.primary_email}`"
-                  target="_blank"
-                  class="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-brand-600 hover:bg-brand-500 text-xs font-semibold text-white shadow-glow-blue transition-all"
-                >
-                  <ExternalLink class="w-3.5 h-3.5" />
-                  <span>Open in Mail Client</span>
-                </a>
-              </div>
-            </div>
-
-            <div class="text-sm font-mono font-bold text-emerald-400 select-all">
-              {{ hiringContacts.primary_email }}
-            </div>
-          </div>
-
-          <!-- All Derived & Discovered Inboxes -->
-          <div class="space-y-2">
-            <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-              Discovered Inboxes & Channels:
-            </span>
-            
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div
-                v-for="email in [...new Set([...(hiringContacts?.direct_emails || []), ...(hiringContacts?.derived_inboxes || [])])]"
-                :key="email"
-                class="flex items-center justify-between p-2 rounded-lg bg-dark-900 border border-white/5 hover:border-white/15 transition-all text-xs"
-              >
-                <div class="flex items-center gap-1.5 overflow-hidden">
-                  <Mail class="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                  <span class="font-mono text-slate-200 truncate select-all">{{ email }}</span>
-                </div>
-                <button
-                  @click="copyToClipboard(email, `email_${email}`)"
-                  class="p-1 rounded text-slate-400 hover:text-white hover:bg-white/10 shrink-0"
-                  title="Copy email"
-                >
-                  <Check v-if="copiedField === `email_${email}`" class="w-3.5 h-3.5 text-emerald-400" />
-                  <Copy v-else class="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Follow-Up Message / Outreach Pitch -->
-        <div class="glass-card rounded-xl p-4 border border-white/10 space-y-4">
-          <div class="flex items-center gap-2">
-            <Send class="w-4 h-4 text-brand-400" />
-            <span class="text-xs font-bold text-white">Dynamic Outreach Pitch</span>
-          </div>
-          
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label class="block text-[11px] font-semibold text-slate-400 mb-1">Recipient Persona</label>
-              <select v-model="outreachPersona" class="w-full bg-dark-900 border border-white/10 text-xs text-white rounded-lg p-2 focus:outline-none focus:border-brand-500">
-                <option value="technical_lead">Technical Lead (CTO, VP Eng)</option>
-                <option value="recruiter">Recruiter (TA, HR)</option>
-                <option value="founder">Founder (CEO, Co-founder)</option>
-              </select>
-            </div>
-            <div>
-              <label class="block text-[11px] font-semibold text-slate-400 mb-1">Outreach Stage</label>
-              <select v-model="outreachType" class="w-full bg-dark-900 border border-white/10 text-xs text-white rounded-lg p-2 focus:outline-none focus:border-brand-500">
-                <option value="post_application">Post-Application Note</option>
-                <option value="direct_pitch">Direct Cold Pitch</option>
-                <option value="follow_up">Reply Thread Follow-Up</option>
-              </select>
-            </div>
-          </div>
-
-          <button
-            @click="generateOutreach"
-            :disabled="isGeneratingOutreach"
-            class="w-full py-2 bg-brand-600 hover:bg-brand-500 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-semibold text-white rounded-lg transition-all"
-          >
-            {{ isGeneratingOutreach ? 'Generating Outreach...' : 'Generate Precision Outreach Pitch' }}
-          </button>
-          
-          <div v-if="outreachError" class="text-xs text-red-400 p-2 bg-red-500/10 rounded-lg">
-            {{ outreachError }}
-          </div>
-
-          <div v-if="outreachSubjects.length > 0" class="space-y-2">
-            <label class="block text-[11px] font-semibold text-slate-400">Subject Options:</label>
-            <div class="grid gap-2">
-              <div v-for="(subject, idx) in outreachSubjects" :key="idx" class="flex items-center justify-between p-2 bg-dark-950 border border-white/5 rounded-lg">
-                <span class="text-xs text-slate-200">{{ subject }}</span>
-                <button @click="copyToClipboard(subject, `subject_${idx}`)" class="text-slate-400 hover:text-emerald-400 p-1">
-                  <Check v-if="copiedField === `subject_${idx}`" class="w-3.5 h-3.5" />
-                  <Copy v-else class="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div v-if="followUpPitchMessage" class="space-y-2">
-            <div class="flex items-center justify-between">
-              <label class="block text-[11px] font-semibold text-slate-400">Message Body:</label>
-              <button
-                @click="copyToClipboard(followUpPitchMessage, 'pitch_msg')"
-                class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-xs text-white font-semibold shadow-glow-blue transition-all"
-              >
-                <Check v-if="copiedField === 'pitch_msg'" class="w-3.5 h-3.5 text-white" />
-                <Copy v-else class="w-3.5 h-3.5 text-white" />
-                <span>{{ copiedField === 'pitch_msg' ? 'Copied Pitch!' : 'Copy Outreach Message' }}</span>
-              </button>
-            </div>
-            <textarea
-              v-model="followUpPitchMessage"
-              rows="8"
-              class="w-full p-3 rounded-lg bg-dark-950/80 border border-white/5 text-xs text-slate-200 font-mono leading-relaxed focus:outline-none focus:border-brand-500"
-            ></textarea>
-          </div>
-        </div>
-
-      </div>
-
-      <!-- TAB 4: Ad-Hoc Copilot Box -->
-      <div v-else-if="activeTab === 'adhoc'" class="space-y-4">
-        <div class="glass-card rounded-xl p-4 border border-white/10 space-y-4">
-          <div class="flex items-center gap-2 text-xs font-bold text-amber-300">
-            <Sparkles class="w-4 h-4 text-amber-400" />
-            <span>Ad-Hoc Application Question Solver</span>
-          </div>
-          <p class="text-xs text-slate-400">
-            Encountered an unexpected screening question on the application portal? Paste it here to generate a tailored answer strictly fitted to Emmanuel's verified profile in &lt; 2 seconds.
-          </p>
-
-          <!-- Input -->
-          <div>
-            <label class="block text-xs font-semibold text-slate-300 mb-1.5">Application Question:</label>
-            <textarea
-              v-model="customQuestion"
-              rows="2"
-              placeholder="e.g. Describe your experience scaling high-concurrency microservices or handling production incidents..."
-              class="w-full p-2.5 bg-dark-900 border border-white/10 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
-            ></textarea>
-          </div>
-
-          <!-- Slider -->
-          <div class="flex items-center justify-between gap-4 text-xs">
-            <div class="flex items-center gap-2">
-              <span class="text-slate-300">Max Character Limit:</span>
-              <span class="font-mono font-bold text-white bg-dark-900 px-2 py-0.5 rounded border border-white/10">{{ customMaxChars }} chars</span>
-            </div>
-            <input
-              type="range"
-              min="50"
-              max="1000"
-              step="10"
-              v-model.number="customMaxChars"
-              class="w-44 accent-brand-500 cursor-pointer"
-            />
-          </div>
-
-          <!-- Submit Button -->
-          <button
-            @click="generateAdHocAnswer"
-            :disabled="!customQuestion.trim() || isGenerating"
-            class="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-xs font-bold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-glow-blue"
-          >
-            <Send class="w-3.5 h-3.5" :class="{ 'animate-pulse': isGenerating }" />
-            <span>{{ isGenerating ? 'Synthesizing with LLM (< 2s)...' : 'Generate Tailored Answer' }}</span>
-          </button>
-
-          <!-- Result Area -->
-          <div v-if="adHocAnswer" class="mt-4 p-3 bg-dark-950 rounded-lg border border-brand-500/30 space-y-2">
-            <div class="flex items-center justify-between text-xs">
-              <span class="font-semibold text-slate-300">Generated Answer:</span>
-              <div class="flex items-center gap-2">
-                <span class="font-mono text-[11px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-semibold">
-                  {{ adHocAnswer.length }} / {{ customMaxChars }} chars
-                </span>
-                <button
-                  @click="copyToClipboard(adHocAnswer, 'adhoc')"
-                  class="flex items-center gap-1 px-2.5 py-1 rounded bg-white/10 hover:bg-white/15 text-xs text-white"
-                >
-                  <Check v-if="copiedField === 'adhoc'" class="w-3.5 h-3.5 text-emerald-400" />
-                  <Copy v-else class="w-3.5 h-3.5 text-slate-300" />
-                  <span>{{ copiedField === 'adhoc' ? 'Copied!' : 'Copy' }}</span>
-                </button>
-              </div>
-            </div>
-            <p class="text-xs text-slate-200 font-mono leading-relaxed bg-dark-900/90 p-2.5 rounded border border-white/5 select-all">
-              {{ adHocAnswer }}
-            </p>
-          </div>
-
-          <div v-if="adHocError" class="text-xs text-red-400">
-            {{ adHocError }}
-          </div>
-        </div>
-      </div>
-
-    </div>
-  </div>
+  </section>
 </template>

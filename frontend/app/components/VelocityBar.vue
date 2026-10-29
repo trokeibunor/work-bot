@@ -51,6 +51,7 @@ const triggerScrapers = async () => {
   scrapeMessage.value = 'Triggering crawlers...'
   try {
     const res = await fetch(`${apiBase}/api/metrics/scrapers/trigger`, { method: 'POST' })
+    if (!res.ok) throw new Error('Could not start search')
     if (res.ok) {
       scrapeMessage.value = 'Scrapers enqueued!'
       setTimeout(() => {
@@ -78,19 +79,19 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <header class="sticky top-0 z-50 glass-panel border-b border-white/10 px-4 lg:px-8 py-3 transition-all">
+  <header class="relative md:sticky top-0 z-30 glass-panel border-b border-white/10 px-4 lg:px-8 py-3 transition-all">
     <div class="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
       
       <!-- Logo & Profile Identity -->
       <div class="flex items-center gap-3">
         <NuxtLink to="/" class="flex items-center gap-2 group">
-          <div class="h-9 w-9 rounded-lg bg-gradient-to-br from-brand-600 to-emerald-500 flex items-center justify-center shadow-glow-blue transition-transform group-hover:scale-105">
+          <div class="h-9 w-9 rounded-lg bg-gradient-to-br from-brand-600 to-emerald-500 flex items-center justify-center  transition-transform group-hover:scale-105">
             <Zap class="w-5 h-5 text-white fill-white" />
           </div>
           <div>
             <div class="flex items-center gap-2">
               <span class="font-extrabold tracking-tight text-white text-base">JATE</span>
-              <span class="text-xs font-mono uppercase px-1.5 py-0.5 rounded bg-brand-500/20 text-brand-500 border border-brand-500/30">Cockpit</span>
+              <span class="text-xs font-mono uppercase px-1.5 py-0.5 rounded bg-brand-500/20 text-blue-300 border border-brand-500/30">Workspace</span>
             </div>
             <p class="text-[11px] text-slate-400 font-medium">Emmanuel Okeibunor &bull; 50 Apps/Day Target</p>
           </div>
@@ -101,12 +102,12 @@ onUnmounted(() => {
       <div class="flex-1 max-w-lg w-full">
         <div class="flex items-center justify-between text-xs mb-1.5 font-medium">
           <div class="flex items-center gap-2">
-            <span class="text-slate-300">Daily Velocity:</span>
+            <span class="text-slate-300">Today:</span>
             <span class="text-white font-bold font-mono">{{ metrics.today_applied }} / {{ metrics.daily_target }}</span>
             <span class="text-slate-400 text-[11px]">({{ metrics.remaining }} to go)</span>
           </div>
           <div class="flex items-center gap-1.5">
-            <span v-if="isOnTrack" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 animate-pulse-subtle">
+            <span v-if="isOnTrack" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 ">
               <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
               On Track
             </span>
@@ -117,7 +118,7 @@ onUnmounted(() => {
         <!-- Custom Progress Track -->
         <div class="h-2.5 w-full bg-dark-850 rounded-full overflow-hidden p-0.5 border border-white/5">
           <div
-            class="h-full rounded-full transition-all duration-700 ease-out bg-gradient-to-r from-brand-500 via-indigo-500 to-emerald-400 shadow-glow-green"
+            class="h-full rounded-full transition-all duration-700 ease-out bg-brand-500"
             :style="{ width: `${progressPercentage}%` }"
           ></div>
         </div>

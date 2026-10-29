@@ -630,7 +630,7 @@ async def execute_job_ingest_pipeline(
             is_remote_or_relocation_friendly=True,
             description_raw=description,
             tech_stack_tags=tech_tags,
-            status=JobStatus.QUEUED_FOR_LLM,
+            status=JobStatus.QUEUED_FOR_LLM if tailor_now else JobStatus.NEW,
             match_score=0
         )
         session.add(new_job)
@@ -638,7 +638,8 @@ async def execute_job_ingest_pipeline(
         await session.refresh(new_job)
 
         total_processed += 1
-        total_queued += 1
+        if tailor_now:
+            total_queued += 1
 
         # 4. Trigger Celery LLM Tailoring Task
         if tailor_now:
@@ -647,6 +648,9 @@ async def execute_job_ingest_pipeline(
                 logger.info(f"Dispatched Celery LLM tailoring for ingested job: {new_job.id}")
             except Exception as e:
                 logger.error(f"Failed to dispatch Celery task for {new_job.id}: {e}")
+                new_job.status = JobStatus.NEW
+                total_queued -= 1
+                await session.commit()
 
         results.append(IngestedJobItemResult(
             id=new_job.id,
@@ -655,7 +659,7 @@ async def execute_job_ingest_pipeline(
             source_url=new_job.source_url,
             status=new_job.status.value,
             match_score=new_job.match_score,
-            action_taken="queued_for_llm"
+            action_taken="queued_for_llm" if new_job.status == JobStatus.QUEUED_FOR_LLM else "saved"
         ))
 
     return JobIngestResponse(

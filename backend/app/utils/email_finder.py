@@ -40,7 +40,8 @@ def extract_hiring_contacts(
     description_raw: str,
     company_name: str,
     source_url: str,
-    job_title: str
+    job_title: str,
+    candidate: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Extracts explicit hiring emails from job descriptions and generates
@@ -74,17 +75,12 @@ def extract_hiring_contacts(
     is_direct = len(verified_direct_emails) > 0
 
     # 3. Follow-up subject & polite body
-    subject = f"Application Follow-up: Emmanuel Okeibunor – {job_title}"
-    body = (
-        f"Hi {company_name} Hiring Team,\n\n"
-        f"I recently submitted my application for the {job_title} position. Given my background building resilient fintech systems at Sycamore (scaling customer platforms to 400,000+ users with an 84%+ fraud reduction) and concurrent Golang backend services at ALN Riders, I wanted to reach out directly to express my strong enthusiasm for {company_name}'s mission.\n\n"
-        f"I have prepared tailored materials and would welcome the opportunity to connect regarding how my engineering background aligns with your roadmap.\n\n"
-        f"Portfolio: https://okeibunoremma.work\n"
-        f"LinkedIn: https://linkedin.com/in/okeibunoremma\n\n"
-        f"Best regards,\n"
-        f"Emmanuel Okeibunor\n"
-        f"okeibunoremma@gmail.com | +234 9015379412"
-    )
+    candidate = candidate or {}
+    name = candidate.get('name') or 'Candidate'
+    contact = candidate.get('contact') or {}
+    subject = f"Regarding {job_title} — {name}"
+    body = (f"Hi {company_name} Hiring Team,\n\nI am interested in the {job_title} position and would welcome the opportunity to discuss my experience.\n\n"
+            f"Best regards,\n{name}\n" + ' | '.join(v for v in [contact.get('email'),contact.get('phone'),contact.get('portfolio')] if v))
 
     # 4. Generate mailto URL with URL encoding
     mailto_url = f"mailto:{primary_email}?subject={urllib.parse.quote(subject)}&body={urllib.parse.quote(body)}"

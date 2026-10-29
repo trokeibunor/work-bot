@@ -47,9 +47,9 @@ CANDIDATE_PROFILE: Dict[str, Any] = {
         {
             "company": "E-nergie",
             "role": "Creator & Lead Architect",
-            "period": "Recent Project",
+            "period": "2026 - Present",
             "highlights": [
-                "Built https://demo.e-nergie.co, a home appliance energy optimization and monitoring platform using a heuristic Non-Intrusive Load Management (NILM) system in Python and FastAPI."
+                "Built https://neki.e-nergie.co, a home appliance energy optimization and monitoring platform using a heuristic Non-Intrusive Load Management (NILM) system in Python and FastAPI."
             ]
         },
         {
@@ -77,7 +77,7 @@ Ground-Truth Candidate Profile:
 - Core Stack: Vue.js, Nuxt (3/4), React, TypeScript, Tailwind CSS, Python (FastAPI, Django), Golang, Java (Spring Boot), Node.js, PostgreSQL, Docker, Linux VPS (Contabo/Coolify), GCP.
 - Key Experience 1 (Sycamore - Fintech Software Engineer, Feb 2025–Present): Led frontend engineering for fraud detection & risk-management platform (84%+ fraud reduction); built configurable rules engine for non-technical teams. Scaled Nuxt.js customer apps to 400,000+ active users and 5,000+ daily logins. Architected Foreign Investments, Premium Yield, and Commercial Paper products (+32% adoption). Built B2B Merchant Dashboard & Core Banking tooling. Championed LLM/AI-assisted engineering workflows.
 - Key Experience 2 (ALN Riders - Project Lead Engineer, Mar 2025–Present): Led end-to-end logistics platform (alnriders.com) using Nuxt 4 and Golang concurrent backend APIs. Collaborated on Flutter iOS app deployment. Managed Contabo cloud infrastructure, surpassing 1M+ transaction value and 500+ active customers.
-- Key Experience 3 (E-nergie - Recent Project): Built https://demo.e-nergie.co, a home appliance energy optimization and monitoring platform using a heuristic Non-Intrusive Load Management (NILM) system in Python and FastAPI.
+- Key Experience 3 (E-nergie - Recent Project): Built https://neki.e-nergie.co, a home appliance energy optimization and monitoring platform using a heuristic Non-Intrusive Load Management (NILM) system in Python and FastAPI.
 - Key Experience 4 (Numinix & Pertinence Group): Architected custom CI/CD pipelines at Numinix (Vancouver remote). Lead Frontend Developer at Pertinence Group (Oneapp serving 15,000+ users, RBAC security, Repository pattern API layer, 35% productivity boost).
 - Education: B.Eng. Petroleum Engineering (Second-Class Upper), University of Benin.
 """

@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     DEEPSEEK_API_KEY: str = ""
 
+    TRANSCRIPTION_API_KEY: str = ""
+    TRANSCRIPTION_BASE_URL: Optional[str] = None
+    TRANSCRIPTION_MODEL: str = "gpt-4o-mini-transcribe"
+
     # Storage
     STORAGE_DIR: str = "/app/storage/pdfs"
 

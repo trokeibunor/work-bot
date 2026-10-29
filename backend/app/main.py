@@ -6,9 +6,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from app.models import ORGANIZATION_EXPRESSION
 from app.config import settings
 from app.database import engine
-from app.api import jobs, assets, metrics
+from app.api import jobs, assets, metrics, candidate
+from app.services.candidate_profile import initialize_candidate_schema
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,10 +27,16 @@ async def lifespan(app: FastAPI):
     # Test database connectivity
     try:
         async with engine.begin() as conn:
-            await conn.execute(text("SELECT 1"))
+            await conn.execute(text("SELECT pg_advisory_xact_lock(74822026)"))
+            await conn.execute(text(
+                "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS organization_type VARCHAR(20) "
+                f"GENERATED ALWAYS AS ({ORGANIZATION_EXPRESSION}) STORED"
+            ))
+            await initialize_candidate_schema(conn)
         logger.info("Database connection successfully established.")
     except Exception as e:
-        logger.error(f"Database connection error: {e}")
+        logger.exception("Database initialization failed")
+        raise
     yield
     logger.info("Shutting down JATE Backend Services...")
     await engine.dispose()
@@ -55,6 +63,7 @@ app.add_middleware(
 app.include_router(jobs.router, prefix="/api")
 app.include_router(assets.router, prefix="/api")
 app.include_router(metrics.router, prefix="/api")
+app.include_router(candidate.router, prefix="/api")
 
 
 @app.get("/api/health", tags=["Health"])

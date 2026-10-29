@@ -11,7 +11,7 @@ from openai import OpenAI
 from app.database import get_db
 from app.models import Job, ApplicationAsset, JobStatus
 from app.schemas import (
-    JobResponse, JobWithAssetResponse, JobStatusUpdate,
+    BulkJobRequest, JobResponse, JobWithAssetResponse, JobStatusUpdate,
     PaginatedJobsResponse, JobStatsResponse,
     CustomQuestionRequest, CustomQuestionResponse,
     HiringContactInfo, CoverLetterUpdateRequest, CoverLetterRegenerateRequest,
@@ -20,10 +20,9 @@ from app.schemas import (
     JobIngestUrlsRequest, JobIngestTextRequest, JobIngestResponse, IngestedJobItemResult
 )
 from app.config import settings
-from app.candidate_context import CANDIDATE_PROFILE, CANDIDATE_SYSTEM_PROMPT, CANDIDATE_BASE_RESUME
+from app.services.candidate_profile import application_context, legacy_context
 from app.workers.llm_tailor import clamp_text
 from app.utils.email_finder import extract_hiring_contacts
-from app.utils.pdf_generator import generate_cover_letter_pdf, generate_resume_pdf
 from app.utils.job_parser import (
     parse_pdf_bytes,
     parse_csv_bytes,
@@ -41,7 +40,8 @@ def build_job_with_asset_response(job: Job) -> JobWithAssetResponse:
         description_raw=job.description_raw,
         company_name=job.company_name,
         source_url=job.source_url,
-        job_title=job.job_title
+        job_title=job.job_title,
+        candidate=(getattr(job.assets, "candidate_snapshot", None) or {}).get("data", {})
     )
     hiring_contact_info = HiringContactInfo(**contacts)
     
@@ -63,6 +63,7 @@ def build_job_with_asset_response(job: Job) -> JobWithAssetResponse:
         match_score=job.match_score,
         match_reasoning=job.match_reasoning,
         status=job.status,
+        organization_type=job.organization_type,
         is_founder_led=getattr(job, "is_founder_led", False),
         applied_at=job.applied_at,
         created_at=job.created_at,
@@ -119,6 +120,7 @@ async def get_jobs_stats(
 async def list_jobs(
     status: Optional[str] = Query(None, description="Filter by status (ready_to_apply, queued_for_llm, applied, archived, all)"),
     source: Optional[str] = Query(None, description="Filter by source (greenhouse, lever, ashby, reddit, hackernews, all)"),
+    organization_type: Optional[str] = Query(None, pattern="^(nonprofit|unknown)$"),
     founder_led_only: bool = Query(False, description="Filter for founder-led postings only"),
     min_score: int = Query(0, ge=0, le=100, description="Minimum match score"),
     days: Optional[int] = Query(None, ge=1, description="Filter jobs posted in last N days (1, 3, 7, 14, 30)"),
@@ -143,6 +145,9 @@ async def list_jobs(
     # 2. Source filter
     if source and source.lower() != "all":
         filters.append(Job.source == source.lower())
+
+    if organization_type:
+        filters.append(Job.organization_type == organization_type)
 
     # 3. Founder-led filter
     if founder_led_only:
@@ -216,6 +221,62 @@ async def list_jobs(
         )
 
     return formatted_jobs
+
+
+@router.post("/bulk")
+async def bulk_jobs(payload: BulkJobRequest, db: AsyncSession = Depends(get_db)):
+    from app.workers.llm_tailor import tailor_job_task
+
+    ids = list(dict.fromkeys(payload.job_ids))
+    result = await db.execute(select(Job).where(Job.id.in_(ids)).order_by(Job.id).with_for_update())
+    jobs = {job.id: job for job in result.scalars().all()}
+    updated, skipped, previous = [], [], {}
+    for job_id in ids:
+        job = jobs.get(job_id)
+        reason = None
+        if not job:
+            reason = "Job no longer exists."
+        elif payload.action == "ignore":
+            if job.status not in (JobStatus.NEW, JobStatus.READY_TO_APPLY):
+                reason = "Only unsubmitted jobs that are not being prepared can be ignored in bulk."
+            else:
+                previous[str(job.id)] = job.status.value
+                job.status = JobStatus.ARCHIVED
+        elif payload.action == "restore":
+            prior = payload.previous_statuses.get(job_id)
+            if job.status != JobStatus.ARCHIVED or prior not in (JobStatus.NEW, JobStatus.READY_TO_APPLY):
+                reason = "Job changed since it was ignored; it was left unchanged."
+            else:
+                job.status = prior
+        elif payload.action == "mark_applied":
+            if job.status != JobStatus.READY_TO_APPLY:
+                reason = "Only jobs with materials ready can be marked applied in bulk."
+            else:
+                job.status = JobStatus.APPLIED
+                job.applied_at = job.applied_at or datetime.utcnow()
+        elif payload.action == "prepare":
+            if job.status != JobStatus.NEW:
+                reason = "Only jobs without prepared materials can be queued."
+            else:
+                job.status = JobStatus.QUEUED_FOR_LLM
+        if reason:
+            skipped.append({"id": str(job_id), "reason": reason})
+        else:
+            updated.append(str(job_id))
+    await db.commit()
+    if payload.action == "prepare":
+        queued = []
+        for job_id in updated:
+            try:
+                tailor_job_task.delay(job_id)
+                queued.append(job_id)
+            except Exception:
+                # Release only our reservation so the user can retry a broker failure.
+                await db.execute(update(Job).where(Job.id == uuid.UUID(job_id), Job.status == JobStatus.QUEUED_FOR_LLM).values(status=JobStatus.NEW))
+                await db.commit()
+                skipped.append({"id": job_id, "reason": "Could not queue materials. Please retry."})
+        updated = queued
+    return {"updated_ids": updated, "skipped": skipped, "previous_statuses": previous}
 
 
 @router.get("/{job_id}", response_model=JobWithAssetResponse)
@@ -313,24 +374,23 @@ async def update_cover_letter(
             detail=f"Job with ID '{job_id}' not found."
         )
 
-    pdf_path = generate_cover_letter_pdf(
-        candidate_name=CANDIDATE_PROFILE["name"],
-        company_name=job.company_name,
-        job_title=job.job_title,
-        cover_letter_markdown=payload.cover_letter_markdown
-    )
+    context = await application_context(db, job.assets) if not job.assets else None
+
+    # Invalidate the cached PDF; the download endpoint renders the latest markdown.
+    pdf_path = None
 
     if not job.assets:
         job.assets = ApplicationAsset(
             job_id=job.id,
+            candidate_snapshot=context.snapshot(),
             cover_letter_markdown=payload.cover_letter_markdown,
             cover_letter_pdf_path=pdf_path,
             ans_why_company_250=f"Excited by {job.company_name}'s high-scale mission.",
             ans_why_company_500=f"Excited by {job.company_name}'s mission and engineering culture.",
-            ans_technical_challenge_250="Engineered 84%+ fraud reduction platform at Sycamore.",
-            ans_technical_challenge_500="Engineered 84%+ fraud reduction platform at Sycamore and concurrent Golang backends.",
-            ans_python_go_proficiency_220="5+ years building FastAPI systems & concurrent Golang microservices.",
-            ans_location_relocation_220="Lagos, Nigeria based. Fully ready for remote or global relocation.",
+            ans_technical_challenge_250="Not provided.",
+            ans_technical_challenge_500="Not provided.",
+            ans_python_go_proficiency_220="Not provided.",
+            ans_location_relocation_220="Not provided.",
             custom_qa={}
         )
         db.add(job.assets)
@@ -358,8 +418,9 @@ async def regenerate_cover_letter(
             detail=f"Job with ID '{job_id}' not found."
         )
 
+    context = await application_context(db, job.assets)
     from app.workers.llm_tailor import LLMTailor
-    tailor = LLMTailor()
+    tailor = LLMTailor(context)
     new_cover_letter = tailor.generate_role_customized_cover_letter(
         job_title=job.job_title,
         company_name=job.company_name,
@@ -368,24 +429,21 @@ async def regenerate_cover_letter(
         custom_instructions=payload.custom_instructions
     )
 
-    pdf_path = generate_cover_letter_pdf(
-        candidate_name=CANDIDATE_PROFILE["name"],
-        company_name=job.company_name,
-        job_title=job.job_title,
-        cover_letter_markdown=new_cover_letter
-    )
+    # Invalidate the cached PDF; the download endpoint renders the latest markdown.
+    pdf_path = None
 
     if not job.assets:
         job.assets = ApplicationAsset(
             job_id=job.id,
+            candidate_snapshot=context.snapshot(),
             cover_letter_markdown=new_cover_letter,
             cover_letter_pdf_path=pdf_path,
             ans_why_company_250=f"Excited by {job.company_name}'s high-scale mission.",
             ans_why_company_500=f"Excited by {job.company_name}'s mission and engineering culture.",
-            ans_technical_challenge_250="Engineered 84%+ fraud reduction platform at Sycamore.",
-            ans_technical_challenge_500="Engineered 84%+ fraud reduction platform at Sycamore and concurrent Golang backends.",
-            ans_python_go_proficiency_220="5+ years building FastAPI systems & concurrent Golang microservices.",
-            ans_location_relocation_220="Lagos, Nigeria based. Fully ready for remote or global relocation.",
+            ans_technical_challenge_250="Not provided.",
+            ans_technical_challenge_500="Not provided.",
+            ans_python_go_proficiency_220="Not provided.",
+            ans_location_relocation_220="Not provided.",
             custom_qa={}
         )
         db.add(job.assets)
@@ -413,16 +471,15 @@ async def update_resume(
             detail=f"Job with ID '{job_id}' not found."
         )
 
-    pdf_path = generate_resume_pdf(
-        candidate_name=CANDIDATE_PROFILE["name"],
-        company_name=job.company_name,
-        job_title=job.job_title,
-        resume_markdown=payload.resume_markdown
-    )
+    context = await application_context(db, job.assets) if not job.assets else None
+
+    # Invalidate the cached PDF; the download endpoint renders the latest markdown.
+    pdf_path = None
 
     if not job.assets:
         job.assets = ApplicationAsset(
             job_id=job.id,
+            candidate_snapshot=context.snapshot(),
             cover_letter_markdown="Not generated yet",
             resume_markdown=payload.resume_markdown,
             resume_pdf_path=pdf_path,
@@ -459,6 +516,7 @@ async def regenerate_resume(
             detail=f"Job with ID '{job_id}' not found."
         )
 
+    context = await application_context(db, job.assets)
     llm_key = settings.effective_llm_key
     if not llm_key:
         raise HTTPException(status_code=400, detail="No LLM API key configured.")
@@ -466,9 +524,9 @@ async def regenerate_resume(
     base_url = settings.effective_base_url
     client = OpenAI(api_key=llm_key, base_url=base_url) if base_url else OpenAI(api_key=llm_key)
 
-    system_prompt = f"{CANDIDATE_SYSTEM_PROMPT}\n\nBASE RESUME TO OPTIMIZE:\n{CANDIDATE_BASE_RESUME}"
+    system_prompt = f"{context.system_prompt}\n\nMASTER RESUME:\n{context.resume}"
     prompt = f"""
-Analyze the following job opportunity and tailor the base resume for Emmanuel Okeibunor.
+Analyze the following job opportunity and tailor the master resume for {context.name}.
 
 Target Job:
 Company: {job.company_name}
@@ -498,16 +556,13 @@ Strict Rules:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LLM Generation failed: {str(e)}")
 
-    pdf_path = generate_resume_pdf(
-        candidate_name=CANDIDATE_PROFILE["name"],
-        company_name=job.company_name,
-        job_title=job.job_title,
-        resume_markdown=new_resume_markdown
-    )
+    # Invalidate the cached PDF; the download endpoint renders the latest markdown.
+    pdf_path = None
 
     if not job.assets:
         job.assets = ApplicationAsset(
             job_id=job.id,
+            candidate_snapshot=context.snapshot(),
             cover_letter_markdown="Not generated yet",
             resume_markdown=new_resume_markdown,
             resume_pdf_path=pdf_path,
@@ -577,12 +632,13 @@ async def answer_custom_question(
             detail=f"Job with ID '{job_id}' not found."
         )
 
+    context = await application_context(db, job.assets)
     prompt = f"""
 Target Job: {job.job_title} at {job.company_name}
 Question: {payload.question}
 
 Strict Instruction:
-Generate a direct, highly competent, professional answer as Emmanuel Okeibunor.
+Generate a direct, highly competent, professional answer as {context.name}.
 Character Limit: EXACTLY <= {payload.max_chars} characters.
 Do not exceed {payload.max_chars} characters under any circumstances!
 """
@@ -600,7 +656,7 @@ Do not exceed {payload.max_chars} characters under any circumstances!
             response = client.chat.completions.create(
                 model=settings.effective_model,
                 messages=[
-                    {"role": "system", "content": CANDIDATE_SYSTEM_PROMPT},
+                    {"role": "system", "content": context.system_prompt},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.2,
@@ -608,9 +664,9 @@ Do not exceed {payload.max_chars} characters under any circumstances!
             )
             answer_text = response.choices[0].message.content.strip()
         except Exception as e:
-            answer_text = f"Emmanuel brings proven experience scaling Vue/Nuxt & Python/Golang platforms at Sycamore (400k+ users) and ALN Riders."
+            answer_text = "Automated answering is unavailable. Please answer this question using your confirmed experience."
     else:
-        answer_text = f"Emmanuel brings proven experience scaling Vue/Nuxt & Python/Golang platforms at Sycamore (400k+ users) and ALN Riders."
+        answer_text = "Automated answering is unavailable. Please answer this question using your confirmed experience."
 
     # Enforce clamp
     answer_text = clamp_text(answer_text, payload.max_chars)
@@ -653,6 +709,7 @@ async def generate_outreach_message(
     base_url = settings.effective_base_url
     client = OpenAI(api_key=llm_key, base_url=base_url) if base_url else OpenAI(api_key=llm_key)
 
+    context = await application_context(db, job.assets)
     prompt = f"""
 # Role & Objective
 You are an elite executive recruiter and technical cold-outreach strategist. Your goal is to write an ultra-concise, high-reply-rate outreach email to a {payload.recipient_persona} regarding the {job.job_title} role at {job.company_name}.
@@ -663,7 +720,7 @@ Job Description:
 {job.description_raw}
 
 # Candidate Profile
-{CANDIDATE_SYSTEM_PROMPT}
+{context.system_prompt}
 
 # Core Constraints
 - **Word Count:** Strictly 75 to 125 words (excluding subject line and signature). Every sentence must earn its place.
@@ -687,9 +744,9 @@ Outreach Stage: {payload.outreach_type}
 3. The "Already Built This" Proof (1-2 hard-hitting, quantified wins connecting JD priority to candidate profile).
 4. Low-Friction CTA (A question that does not ask for a 30-min call).
 5. Signature Block:
-Emmanuel Okeibunor
-Software Engineer | Vue, Nuxt, Python, Golang
-linkedin.com/in/okeibunor-emmanuel | okeibunoremma.work | +234 9015379412
+{context.name}
+{context.data.get("headline", "")}
+{context.data.get("contact", {})}
 
 Respond EXACTLY with this JSON structure:
 {{

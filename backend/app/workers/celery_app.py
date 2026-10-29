@@ -11,7 +11,8 @@ celery_app = Celery(
         "app.workers.reddit_listener",
         "app.workers.hn_hiring_scraper",
         "app.workers.ats_scraper",
-        "app.workers.llm_tailor"
+        "app.workers.llm_tailor",
+        "app.workers.candidate_profile"
     ]
 )
 
@@ -22,6 +23,7 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_track_started=True,
+    result_expires=3600,  # Results are transient; jobs and assets live in PostgreSQL.
     task_time_limit=600,
     worker_prefetch_multiplier=1,
 )

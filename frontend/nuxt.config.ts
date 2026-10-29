@@ -10,18 +10,15 @@ export default defineNuxtConfig({
   ],
   app: {
     head: {
+      htmlAttrs: { lang: 'en' },
       title: 'JATE — Automated Job Acquisition & Tracking Engine',
       meta: [
         { charset: 'utf-8' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },
         { name: 'description', content: 'Automated high-velocity job application engine tailored for Emmanuel Okeibunor' },
-        { name: 'theme-color', content: '#090D16' }
+        { name: 'theme-color', content: '#17191D' }
       ],
-      link: [
-        { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
-        { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' },
-        { rel: 'stylesheet', href: 'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap' }
-      ]
+
     }
   },
   runtimeConfig: {
