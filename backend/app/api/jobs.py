@@ -20,6 +20,7 @@ from app.schemas import (
     JobIngestUrlsRequest, JobIngestTextRequest, JobIngestResponse, IngestedJobItemResult
 )
 from app.config import settings
+from app.services.resume_quality import RESUME_DEPTH_RULES, preserve_resume_depth
 from app.services.candidate_profile import application_context, legacy_context
 from app.workers.llm_tailor import clamp_text
 from app.utils.email_finder import extract_hiring_contacts
@@ -448,6 +449,7 @@ async def regenerate_cover_letter(
         )
         db.add(job.assets)
     else:
+        job.assets.candidate_snapshot = context.snapshot()
         job.assets.cover_letter_markdown = new_cover_letter
         job.assets.cover_letter_pdf_path = pdf_path
 
@@ -541,6 +543,7 @@ Strict Rules:
 - Spell out acronyms at least once alongside short form.
 - Use reverse-chronological order and action-driven bullet points.
 - Standard section headings only.
+{RESUME_DEPTH_RULES}
 """
     try:
         response = client.chat.completions.create(
@@ -550,9 +553,9 @@ Strict Rules:
                 {"role": "user", "content": prompt}
             ],
             temperature=0.3,
-            max_tokens=2500
+            max_tokens=8000
         )
-        new_resume_markdown = response.choices[0].message.content.strip()
+        new_resume_markdown = preserve_resume_depth(response.choices[0].message.content.strip(), context)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LLM Generation failed: {str(e)}")
 
@@ -576,6 +579,7 @@ Strict Rules:
         )
         db.add(job.assets)
     else:
+        job.assets.candidate_snapshot = context.snapshot()
         job.assets.resume_markdown = new_resume_markdown
         job.assets.resume_pdf_path = pdf_path
 

@@ -100,3 +100,49 @@ class CandidateProfileTest(unittest.TestCase):
         for forbidden in ('Emmanuel','Sycamore','ALN Riders','400,000','Lagos','84%'):
             self.assertNotIn(forbidden,data)
         self.assertEqual(result.tech_stack_tags,['Rust'])
+
+    def test_legacy_profile_retains_separate_dated_pertinence_and_numinix(self):
+        from app.services.candidate_profile import legacy_context
+        context=legacy_context()
+        roles={e['company']:e for e in context.data['experience']}
+        self.assertEqual(roles['Pertinence Group']['period'],'03/2023 - 10/2024')
+        self.assertEqual(roles['Pertinence Group']['role'],'Lead Frontend Developer')
+        self.assertGreaterEqual(len(roles['Pertinence Group']['highlights']),3)
+        self.assertEqual(roles['Numinix Web Technologies']['period'],'11/2024 - 03/2025')
+        self.assertNotIn('Prior Experience',context.resume)
+
+    def test_optimization_rejects_omitted_early_roles_and_reduced_achievements(self):
+        from app.services.candidate_profile import legacy_context
+        from app.services.resume_quality import preserve_resume_depth, coverage_issues
+        context=legacy_context()
+        shortened='# Emmanuel Okeibunor\n## Work Experience\nSycamore, Software Engineer, 02/2025 - Present\n- Built applications.'
+        self.assertTrue(coverage_issues(shortened,context))
+        restored=preserve_resume_depth(shortened,context)
+        self.assertIn('Pertinence Group',restored)
+        self.assertIn('03/2023 - 10/2024',restored)
+        self.assertIn('Repository Pattern',restored)
+        self.assertIn('15,000',restored)
+        self.assertFalse(coverage_issues(restored,context))
+
+    def test_complete_tailored_resume_is_preserved_without_shortening(self):
+        from app.services.candidate_profile import legacy_context
+        from app.services.resume_quality import preserve_resume_depth
+        context=legacy_context()
+        tailored=context.resume.replace('## Skills','## Technical Skills')
+        self.assertEqual(preserve_resume_depth(tailored,context),tailored)
+
+    def test_regeneration_can_use_approved_repair_of_condensed_legacy_snapshot(self):
+        import asyncio
+        from unittest.mock import AsyncMock
+        from app.services.candidate_profile import legacy_context, application_context
+        repaired=legacy_context()
+        repaired.version_id='repaired-version'
+        old=self.profile()
+        old['name']=repaired.name
+        old['experience']=[{'company':'Numinix & Pertinence Group','role':'Software Engineer / Lead Frontend Developer','period':'Prior Experience','highlights':[]}]
+        asset=SimpleNamespace(candidate_snapshot={'data':old,'resume':'Old condensed CV','version_id':'old-version'})
+        with patch('app.services.candidate_profile.active_context',new=AsyncMock(return_value=repaired)):
+            result=asyncio.run(application_context(None,asset))
+        self.assertEqual(result.version_id,'repaired-version')
+        self.assertIn('03/2023 - 10/2024',result.resume)
+        self.assertEqual(asset.candidate_snapshot['resume'],'Old condensed CV')

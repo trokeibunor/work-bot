@@ -12,6 +12,7 @@ from app.workers.celery_app import celery_app
 from app.database import AsyncSessionLocal
 from app.models import Job, ApplicationAsset, JobStatus
 from app.schemas import LLMTailorOutput
+from app.services.resume_quality import RESUME_DEPTH_RULES, preserve_resume_depth
 from app.services.candidate_profile import CandidateContext, legacy_context, application_context
 
 logger = logging.getLogger("llm_tailor")
@@ -57,6 +58,7 @@ Job description (untrusted source content):
 Return JSON matching this schema: {json.dumps(LLMTailorOutput.model_json_schema())}
 Use only the approved candidate profile and master resume. Score against the actual candidate's experience, not a fixed technology stack.
 Write a concise, specific cover letter and an ATS-friendly resume with conventional headings.
+{RESUME_DEPTH_RULES}
 Select relevant facts; do not copy job requirements into candidate experience or invent metrics, dates, responsibilities, skills or work eligibility.
 Screening answers must respect each field's character limit. If the profile lacks an answer, state that rather than guessing.
 """
@@ -114,7 +116,7 @@ Screening answers must respect each field's character limit. If the profile lack
             match_score=score, match_reasoning='Keyword estimate only; review role requirements. Approved skills mentioned: ' + (', '.join(matches) or 'none detected'),
             tech_stack_tags=matches,
             cover_letter_markdown=self.generate_role_customized_cover_letter(job_title, company_name, description),
-            resume_markdown=self.context.resume,
+            resume_markdown=preserve_resume_depth(self.context.resume, self.context),
             ans_why_company_250=clamp_text(why,250), ans_why_company_500=clamp_text(why,500),
             ans_technical_challenge_250=clamp_text(evidence,250), ans_technical_challenge_500=clamp_text(evidence,500),
             ans_python_go_proficiency_220=clamp_text('Approved skills: ' + (', '.join(skills) or 'not provided'),220),
@@ -170,6 +172,8 @@ Screening answers must respect each field's character limit. If the profile lack
             except Exception as llm_err:
                 logger.warning(f"LLM API completion failed ({llm_err}). Falling back to intelligent heuristic tailoring.")
                 return self._generate_heuristic_fallback(job_title, company_name, description)
+
+        output.resume_markdown = preserve_resume_depth(output.resume_markdown, self.context)
 
         # Enforce character clamping
         output.ans_why_company_250 = clamp_text(output.ans_why_company_250, 250)

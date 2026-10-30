@@ -29,3 +29,9 @@ The transcription implementation follows the official [OpenAI Python transcripti
 Production Nuxt/Docker builds; backend unit and PostgreSQL/ASGI tests covering extraction, identity isolation, claim-preserving fallback, PDF special characters, uploads, source review, voice transcript gating, approvals, version conflicts, task retries, and preservation of application snapshots. Database fixtures roll back; provider calls are mocked. Browser review covers desktop and 375px mobile, keyboard-accessible editing, CV preview, navigation and accessibility scans.
 
 Run backend checks using the existing Docker test command with application and test directories mounted; set `RUN_DB_TESTS=1` for the local database integration tests.
+
+## CV depth correction (2026-10-30)
+
+The original migration seeded the profile from a condensed context, merging Numinix and Pertinence into an undated entry. The fuller source CV supplied separate dated roles. Restored the active personal profile and master CV as a new version, including Pertinence Group (Lead Frontend Developer, 03/2023–10/2024), Numinix (11/2024–03/2025), and detailed achievements from that source. Retained the newer approved ALN transaction figure rather than reverting to an older conflicting value.
+
+Tailoring and CV extraction now explicitly preserve dated employment, leadership, scope, metrics, and substantive achievements, with no one-page limit. A deterministic output check verifies employer/title/period coverage, numerical evidence, and achievement bullet count; insufficient output falls back to the complete source CV. These checks detect structural loss, not semantic equivalence of every rephrased sentence. Regenerating an application with the known condensed legacy snapshot can use the same candidate’s repaired approved profile. Saved documents and downloaded files are not mass rewritten. Regression suite: 24 tests passed, including the migration correction and regeneration path.

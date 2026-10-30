@@ -24,7 +24,7 @@ def generate_cover_letter_pdf(
 ) -> str:
     """
     Compiles cover letter markdown into a sleek, professional,
-    single-page PDF using ReportLab.
+    multi-page PDF using ReportLab.
     """
     target_dir = output_dir or settings.STORAGE_DIR
     os.makedirs(target_dir, exist_ok=True)
@@ -33,7 +33,7 @@ def generate_cover_letter_pdf(
     filename = f"{sanitize_filename(candidate_name) or 'Candidate'}_Cover_Letter_{company_slug}.pdf"
     file_path = os.path.join(target_dir, filename)
 
-    # Document setup with compact 0.5 inch margins to ensure single-page fit
+    # Document setup; ReportLab flows the full content onto as many pages as needed.
     doc = SimpleDocTemplate(
         file_path,
         pagesize=letter,
@@ -137,7 +137,7 @@ def generate_resume_pdf(
 ) -> str:
     """
     Compiles tailored ATS-optimized resume markdown into a sleek, professional,
-    single-page PDF using ReportLab.
+    multi-page PDF using ReportLab.
     """
     target_dir = output_dir or settings.STORAGE_DIR
     os.makedirs(target_dir, exist_ok=True)

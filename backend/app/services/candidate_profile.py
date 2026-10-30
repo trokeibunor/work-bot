@@ -75,7 +75,14 @@ async def active_context(db: AsyncSession) -> CandidateContext:
 async def application_context(db, asset=None):
     snapshot = getattr(asset, 'candidate_snapshot', None) if asset else None
     if snapshot:
-        return CandidateContext(snapshot['data'], snapshot['resume'], snapshot['version_id'])
+        saved = CandidateContext(snapshot['data'], snapshot['resume'], snapshot['version_id'])
+        # Repair the known condensed migration only when explicitly regenerating
+        # for the same candidate whose approved profile now has the full history.
+        if any(e.get('company') == 'Numinix & Pertinence Group' and e.get('period') == 'Prior Experience' for e in saved.data.get('experience', [])):
+            current = await active_context(db)
+            if current.name.casefold() == saved.name.casefold() and any(e.get('company') == 'Pertinence Group' and e.get('period') == '03/2023 - 10/2024' for e in current.data.get('experience', [])):
+                return current
+        return saved
     return await active_context(db)
 
 
