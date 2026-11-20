@@ -72,6 +72,9 @@ services:
     container_name: jate_backend
     restart: unless-stopped
     logging: *default-logging
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-jate_admin}:${POSTGRES_PASSWORD:-jate_secure_password_2026}@db:5432/${POSTGRES_DB:-jate_db}
@@ -122,6 +125,9 @@ services:
     container_name: jate_worker
     restart: unless-stopped
     logging: *default-logging
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-jate_admin}:${POSTGRES_PASSWORD:-jate_secure_password_2026}@db:5432/${POSTGRES_DB:-jate_db}
@@ -163,6 +169,9 @@ services:
     container_name: jate_beat
     restart: unless-stopped
     logging: *default-logging
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     command: celery -A app.workers.celery_app beat --loglevel=info
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-jate_admin}:${POSTGRES_PASSWORD:-jate_secure_password_2026}@db:5432/${POSTGRES_DB:-jate_db}
